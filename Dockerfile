@@ -12,3 +12,5 @@ COPY . .
 RUN python manage.py collectstatic --noinput || true
 
 EXPOSE 8000
+
+CMD ["sh", "entrypoint.sh"]
