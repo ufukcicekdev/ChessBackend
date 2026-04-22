@@ -70,9 +70,10 @@ DATABASES = {
     }
 }
 
+USE_REDIS_CHANNEL_LAYER = config("USE_REDIS_CHANNEL_LAYER", default=False, cast=bool)
 REDIS_URL = config("REDIS_URL", default=None)
 
-if REDIS_URL:
+if USE_REDIS_CHANNEL_LAYER and REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
