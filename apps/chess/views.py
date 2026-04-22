@@ -27,6 +27,15 @@ class RoomListCreateView(generics.ListCreateAPIView):
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
+            # "Live games" should not include rooms where the chess game has already ended,
+            # even if the room row wasn't updated for some reason.
+            if status_filter == Room.STATUS_ACTIVE:
+                qs = qs.filter(
+                    game__isnull=False,
+                    game__white_player__isnull=False,
+                    game__black_player__isnull=False,
+                    game__result=Game.RESULT_ONGOING,
+                )
         return qs
 
     def create(self, request, *args, **kwargs):
