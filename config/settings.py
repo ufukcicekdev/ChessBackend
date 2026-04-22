@@ -70,14 +70,18 @@ DATABASES = {
     }
 }
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [(config("REDIS_HOST", default="127.0.0.1"), int(config("REDIS_PORT", default=6379)))],
+REDIS_URL = config("REDIS_URL", default=None)
+
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
         },
-    },
-}
+    }
+else:
+    # Fallback for environments without Redis (single instance only).
+    CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -110,11 +114,6 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
-
-# Redis URL support (Railway provides REDIS_URL)
-REDIS_URL = config("REDIS_URL", default=None)
-if REDIS_URL:
-    CHANNEL_LAYERS["default"]["CONFIG"]["hosts"] = [REDIS_URL]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
