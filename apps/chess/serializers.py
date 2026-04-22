@@ -13,7 +13,7 @@ class GameSerializer(serializers.ModelSerializer):
     white_player = UserPublicSerializer(read_only=True)
     black_player = UserPublicSerializer(read_only=True)
     moves = MoveSerializer(many=True, read_only=True)
-    room_id = serializers.UUIDField(source="room_id", read_only=True)
+    room_id = serializers.UUIDField(read_only=True)
     time_control = serializers.IntegerField(source="room.time_control", read_only=True)
     increment = serializers.IntegerField(source="room.increment", read_only=True)
 
