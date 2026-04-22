@@ -182,22 +182,36 @@ class ChessConsumer(AsyncWebsocketConsumer):
     # ------------------------------------------------------------------ #
 
     async def game_state_event(self, event):
-        await self.send(text_data=json.dumps({"type": "game_state", **event}))
+        # `event` includes Channels' internal "type" key (e.g. "game_state_event").
+        # Ensure the websocket message type is the public one ("game_state").
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "game_state"
+        await self.send(text_data=json.dumps(payload))
 
     async def player_joined_event(self, event):
-        await self.send(text_data=json.dumps({"type": "player_joined", **event}))
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "player_joined"
+        await self.send(text_data=json.dumps(payload))
 
     async def player_left_event(self, event):
-        await self.send(text_data=json.dumps({"type": "player_left", **event}))
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "player_left"
+        await self.send(text_data=json.dumps(payload))
 
     async def game_over_event(self, event):
-        await self.send(text_data=json.dumps({"type": "game_over", **event}))
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "game_over"
+        await self.send(text_data=json.dumps(payload))
 
     async def draw_offer_event(self, event):
-        await self.send(text_data=json.dumps({"type": "draw_offer", **event}))
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "draw_offer"
+        await self.send(text_data=json.dumps(payload))
 
     async def draw_result_event(self, event):
-        await self.send(text_data=json.dumps({"type": "draw_result", **event}))
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "draw_result"
+        await self.send(text_data=json.dumps(payload))
 
     # ------------------------------------------------------------------ #
     #  DB helpers (run in thread pool via database_sync_to_async)         #
