@@ -57,7 +57,7 @@ class WithdrawalRequestView(APIView):
         with transaction.atomic():
             user = User.objects.select_for_update().get(pk=request.user.pk)
             if amount > user.wallet_balance:
-                return Response({"error": "Yetersiz bakiye."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response({"error": "Insufficient balance."}, status=status.HTTP_400_BAD_REQUEST)
             user.wallet_balance -= amount
             user.save(update_fields=["wallet_balance"])
             wr = WithdrawalRequest.objects.create(

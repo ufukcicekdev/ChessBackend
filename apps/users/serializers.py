@@ -44,9 +44,9 @@ class WithdrawalRequestSerializer(serializers.Serializer):
     def validate(self, attrs):
         user = self.context["request"].user
         if not user.iban:
-            raise serializers.ValidationError("Çekim yapabilmek için önce IBAN bilginizi girmelisiniz.")
+            raise serializers.ValidationError("Please add your IBAN before requesting a withdrawal.")
         if attrs["amount"] > user.wallet_balance:
-            raise serializers.ValidationError("Yetersiz bakiye.")
+            raise serializers.ValidationError("Insufficient balance.")
         return attrs
 
 
