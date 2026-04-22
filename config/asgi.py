@@ -5,7 +5,6 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
 
 django_asgi_app = get_asgi_application()
 
@@ -16,10 +15,8 @@ import apps.chess.routing as chess_routing
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": AllowedHostsOriginValidator(
-            JWTAuthMiddlewareStack(
-                URLRouter(chess_routing.websocket_urlpatterns)
-            )
+        "websocket": JWTAuthMiddlewareStack(
+            URLRouter(chess_routing.websocket_urlpatterns)
         ),
     }
 )
