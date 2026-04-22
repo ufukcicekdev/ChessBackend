@@ -160,3 +160,24 @@ def status(*, user, time_control: int, increment: int) -> MatchmakingResult:
         return MatchmakingResult(status="queued", room_id=None)
     return MatchmakingResult(status="queued", room_id=None)
 
+
+def count_matchmaking_queue_entries() -> int:
+    """
+    Sum of LLEN over all mm:q:* lists (one entry per queued user per time control).
+    Returns 0 if Redis is unavailable.
+    """
+    try:
+        r = _redis_client()
+    except RuntimeError:
+        return 0
+    total = 0
+    try:
+        for key in r.scan_iter(match="mm:q:*", count=64):
+            try:
+                total += int(r.llen(key))
+            except (TypeError, ValueError):
+                continue
+    except Exception:
+        return 0
+    return total
+

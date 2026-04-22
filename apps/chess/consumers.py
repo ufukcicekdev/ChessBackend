@@ -117,6 +117,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
             await self.send_error(result["error"])
             return
 
+        extras = await self.get_player_rating_extras()
+
         # Broadcast updated state to all (players + spectators)
         await self.channel_layer.group_send(
             self.room_group,
@@ -128,6 +130,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 "move_number": result["move_number"],
                 "white_time": result["white_time"],
                 "black_time": result["black_time"],
+                "white_rating": extras.get("white_rating"),
+                "black_rating": extras.get("black_rating"),
+                "white_title": extras.get("white_title"),
+                "black_title": extras.get("black_title"),
                 "is_check": result.get("is_check"),
                 "is_game_over": result["is_game_over"],
                 "game_result": result.get("game_result"),
@@ -258,6 +264,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 "pgn": game.pgn,
                 "white_player": game.white_player.username if game.white_player else None,
                 "black_player": game.black_player.username if game.black_player else None,
+                "white_rating": game.white_player.rating if game.white_player else None,
+                "black_rating": game.black_player.rating if game.black_player else None,
+                "white_title": game.white_player.title if game.white_player else None,
+                "black_title": game.black_player.title if game.black_player else None,
                 "white_time": game.white_time_remaining,
                 "black_time": game.black_time_remaining,
                 "is_game_over": game.result != Game.RESULT_ONGOING,
@@ -267,6 +277,19 @@ class ChessConsumer(AsyncWebsocketConsumer):
             }
         except (Room.DoesNotExist, Game.DoesNotExist):
             return None
+
+    @database_sync_to_async
+    def get_player_rating_extras(self):
+        try:
+            game = Game.objects.select_related("white_player", "black_player").get(room_id=self.room_id)
+        except Game.DoesNotExist:
+            return {}
+        return {
+            "white_rating": game.white_player.rating if game.white_player else None,
+            "black_rating": game.black_player.rating if game.black_player else None,
+            "white_title": game.white_player.title if game.white_player else None,
+            "black_title": game.black_player.title if game.black_player else None,
+        }
 
     @database_sync_to_async
     def assign_player_color(self):

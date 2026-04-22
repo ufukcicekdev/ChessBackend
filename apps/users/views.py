@@ -1,6 +1,12 @@
 from rest_framework import generics, permissions
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import User
-from .serializers import UserRegisterSerializer, UserProfileSerializer, UserPublicSerializer
+from .serializers import (
+    UserRegisterSerializer,
+    UserProfileSerializer,
+    UserPublicSerializer,
+    CustomTokenObtainPairSerializer,
+)
 
 
 class RegisterView(generics.CreateAPIView):
@@ -21,3 +27,7 @@ class LeaderboardView(generics.ListAPIView):
     serializer_class = UserPublicSerializer
     permission_classes = [permissions.AllowAny]
     queryset = User.objects.order_by("-rating")[:50]
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer

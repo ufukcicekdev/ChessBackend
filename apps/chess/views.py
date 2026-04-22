@@ -1,6 +1,11 @@
 import stripe
+from datetime import timedelta
+
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -58,22 +63,84 @@ class GameHistoryView(generics.ListAPIView):
 
     def get_queryset(self):
         username = self.kwargs.get("username")
-        return Game.objects.filter(
-            result__in=["white", "black", "draw"]
-        ).filter(
-            white_player__username=username
-        ) | Game.objects.filter(
-            result__in=["white", "black", "draw"]
-        ).filter(
-            black_player__username=username
-        ).order_by("-created_at")[:50]
+        return (
+            Game.objects.filter(result__in=["white", "black", "draw"])
+            .filter(Q(white_player__username=username) | Q(black_player__username=username))
+            .select_related("white_player", "black_player", "room")
+            .prefetch_related("moves")
+            .distinct()
+            .order_by("-created_at")[:50]
+        )
+
+
+class GameRecentListView(generics.ListAPIView):
+    serializer_class = GameSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return (
+            Game.objects.filter(result__in=["white", "black", "draw"])
+            .select_related("white_player", "black_player", "room")
+            .prefetch_related("moves")
+            .order_by("-ended_at", "-created_at")[:100]
+        )
 
 
 class GameDetailView(generics.RetrieveAPIView):
-    queryset = Game.objects.prefetch_related("moves").select_related("white_player", "black_player")
+    queryset = Game.objects.prefetch_related("moves").select_related("white_player", "black_player", "room")
     serializer_class = GameSerializer
     lookup_field = "id"
     permission_classes = [permissions.AllowAny]
+
+
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def platform_stats(request):
+    """
+    Lightweight public stats for the homepage / lobby.
+    - live_games: ongoing games with both players seated.
+    - players_in_live_games: distinct user ids in those games.
+    - users_active_last_15m: Django last_login (updated on JWT login if configured).
+    """
+    User = get_user_model()
+    now = timezone.now()
+    recent_cutoff = now - timedelta(minutes=15)
+
+    live_qs = Game.objects.filter(
+        result=Game.RESULT_ONGOING,
+        white_player__isnull=False,
+        black_player__isnull=False,
+    )
+    live_games_count = live_qs.count()
+    player_ids = set()
+    for wid, bid in live_qs.values_list("white_player_id", "black_player_id"):
+        player_ids.add(wid)
+        player_ids.add(bid)
+    players_in_live_games = len(player_ids)
+
+    users_recent_login = User.objects.filter(last_login__gte=recent_cutoff).count()
+
+    rooms_waiting = Room.objects.filter(status=Room.STATUS_WAITING).count()
+
+    games_finished_today = Game.objects.filter(
+        ended_at__date=now.date(),
+        result__in=[Game.RESULT_WHITE, Game.RESULT_BLACK, Game.RESULT_DRAW],
+    ).count()
+
+    mm_queue = matchmaking.count_matchmaking_queue_entries()
+
+    return Response(
+        {
+            "live_games": live_games_count,
+            "players_in_live_games": players_in_live_games,
+            "users_active_last_15m": users_recent_login,
+            "rooms_waiting": rooms_waiting,
+            "games_finished_today": games_finished_today,
+            "matchmaking_queue": mm_queue,
+            "registered_users": User.objects.count(),
+            "active_users_window_minutes": 15,
+        }
+    )
 
 
 class _MatchmakingSerializer(Serializer):

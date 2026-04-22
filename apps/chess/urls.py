@@ -1,15 +1,17 @@
 from django.urls import path
 from .views import (
     RoomListCreateView, RoomDetailView,
-    GameHistoryView, GameDetailView,
-    create_donation, stripe_webhook,
+    GameHistoryView, GameRecentListView, GameDetailView,
+    create_donation, stripe_webhook, platform_stats,
     MatchmakingJoinView, MatchmakingStatusView, MatchmakingLeaveView,
 )
 
 urlpatterns = [
+    path("stats/", platform_stats, name="chess-stats"),
     path("rooms/", RoomListCreateView.as_view(), name="rooms"),
     path("rooms/<uuid:id>/", RoomDetailView.as_view(), name="room-detail"),
     path("rooms/<uuid:room_id>/donate/", create_donation, name="donate"),
+    path("games/recent/", GameRecentListView.as_view(), name="games-recent"),
     path("games/<uuid:id>/", GameDetailView.as_view(), name="game-detail"),
     path("history/<str:username>/", GameHistoryView.as_view(), name="game-history"),
     path("matchmaking/join/", MatchmakingJoinView.as_view(), name="matchmaking-join"),
