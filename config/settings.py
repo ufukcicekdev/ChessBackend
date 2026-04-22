@@ -99,10 +99,15 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
-CORS_ALLOWED_ORIGINS = config(
-    "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
-).split(",")
+CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=False, cast=bool)
+CORS_ALLOWED_ORIGINS = [
+    o.strip().rstrip("/")
+    for o in config(
+        "CORS_ALLOWED_ORIGINS",
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
+    ).split(",")
+    if o.strip()
+]
 CORS_ALLOW_CREDENTIALS = True
 
 STRIPE_SECRET_KEY = config("STRIPE_SECRET_KEY", default="sk_test_mock_key")

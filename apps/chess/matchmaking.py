@@ -17,9 +17,19 @@ class MatchmakingResult:
 
 
 def _redis_client() -> redis.Redis:
-    if not getattr(settings, "REDIS_URL", None):
-        raise RuntimeError("REDIS_URL is not configured")
-    return redis.from_url(settings.REDIS_URL, decode_responses=True)
+    redis_url = getattr(settings, "REDIS_URL", None)
+    if not redis_url:
+        raise RuntimeError(
+            "REDIS_URL is not configured. "
+            "If you run via docker-compose, use REDIS_URL=redis://redis:6379. "
+            "If you run backend on host, use REDIS_URL=redis://localhost:6379."
+        )
+    client = redis.from_url(redis_url, decode_responses=True)
+    try:
+        client.ping()
+    except Exception as e:
+        raise RuntimeError(f"Redis not reachable at REDIS_URL={redis_url!r}: {e}")
+    return client
 
 
 def _queue_key(time_control: int, increment: int) -> str:
