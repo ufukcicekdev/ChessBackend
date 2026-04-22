@@ -9,6 +9,10 @@ def update_ratings(game, k=32):
     if not white or not black:
         return
 
+    # Don't touch ratings for unfinished/aborted games.
+    if game.result in ("ongoing", "aborted"):
+        return
+
     ea = expected_score(white.rating, black.rating)
     eb = 1 - ea
 
