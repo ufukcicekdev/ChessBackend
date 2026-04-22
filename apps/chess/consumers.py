@@ -1,9 +1,15 @@
+import asyncio
 import json
 import chess
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
 from .models import Game, Move, Room
+
+ABANDON_GRACE_SECONDS = 60
+
+# (room_id, color) → asyncio.Task
+_pending_abandons: dict[tuple, asyncio.Task] = {}
 
 
 class ChessConsumer(AsyncWebsocketConsumer):
@@ -49,6 +55,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 self.room_group,
                 {"type": "player_left_event", "player": self.role, "username": self.username},
             )
+            if await self.is_game_ongoing():
+                key = (self.room_id, self.role)
+                task = asyncio.create_task(self._abandon_after_grace(key))
+                _pending_abandons[key] = task
 
     async def receive(self, text_data):
         try:
@@ -89,6 +99,17 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
         self.role = result["color"]
         self.username = self.user.username
+
+        # Cancel pending abandon timer if this player is reconnecting
+        key = (self.room_id, self.role)
+        task = _pending_abandons.pop(key, None)
+        if task:
+            task.cancel()
+            await self.channel_layer.group_send(
+                self.room_group,
+                {"type": "player_reconnected_event", "player": self.role, "username": self.username},
+            )
+            return
 
         await self.channel_layer.group_send(
             self.room_group,
@@ -249,6 +270,26 @@ class ChessConsumer(AsyncWebsocketConsumer):
         payload = {k: v for k, v in event.items() if k != "type"}
         payload["type"] = "draw_result"
         await self.send(text_data=json.dumps(payload))
+
+    async def player_reconnected_event(self, event):
+        payload = {k: v for k, v in event.items() if k != "type"}
+        payload["type"] = "player_reconnected"
+        await self.send(text_data=json.dumps(payload))
+
+    # ------------------------------------------------------------------ #
+    #  Abandon grace-period                                               #
+    # ------------------------------------------------------------------ #
+
+    async def _abandon_after_grace(self, key: tuple):
+        await asyncio.sleep(ABANDON_GRACE_SECONDS)
+        _pending_abandons.pop(key, None)
+        _, color = key
+        winner = "black" if color == "white" else "white"
+        await self.end_game(winner)
+        await self.channel_layer.group_send(
+            self.room_group,
+            {"type": "game_over_event", "result": winner, "reason": "abandonment"},
+        )
 
     # ------------------------------------------------------------------ #
     #  DB helpers (run in thread pool via database_sync_to_async)         #
@@ -568,6 +609,18 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
         update_ratings(game)
         return {"ok": True}
+
+    @database_sync_to_async
+    def is_game_ongoing(self):
+        try:
+            game = Game.objects.get(room_id=self.room_id)
+            return (
+                game.result == Game.RESULT_ONGOING
+                and game.white_player_id is not None
+                and game.black_player_id is not None
+            )
+        except Game.DoesNotExist:
+            return False
 
     async def send_error(self, message):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))

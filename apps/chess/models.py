@@ -102,6 +102,59 @@ class Move(models.Model):
         return f"Game {self.game_id} Move {self.move_number}: {self.san}"
 
 
+class PlatformSettings(models.Model):
+    """Singleton — yönetim panelinden komisyon oranı buradan değiştirilir."""
+    donation_fee_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=15,
+        help_text="Bağışlardan alınan platform komisyonu (%). Örn: 15 → %15"
+    )
+
+    class Meta:
+        verbose_name = "Platform Settings"
+        verbose_name_plural = "Platform Settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return f"Platform Settings (fee: %{self.donation_fee_percent})"
+
+
+class WithdrawalRequest(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_PAID = "paid"
+    STATUS_REJECTED = "rejected"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_PAID, "Paid"),
+        (STATUS_REJECTED, "Rejected"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="withdrawal_requests"
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    iban_snapshot = models.CharField(max_length=34)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    admin_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.username} – ${self.amount} [{self.status}]"
+
+
 class Donation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name="donations")

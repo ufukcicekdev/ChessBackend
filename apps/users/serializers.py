@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -36,6 +38,18 @@ class UserRegisterSerializer(serializers.ModelSerializer):
         return User.objects.create_user(**validated_data)
 
 
+class WithdrawalRequestSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal("1.00"))
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if not user.iban:
+            raise serializers.ValidationError("Çekim yapabilmek için önce IBAN bilginizi girmelisiniz.")
+        if attrs["amount"] > user.wallet_balance:
+            raise serializers.ValidationError("Yetersiz bakiye.")
+        return attrs
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
     games_lost = serializers.IntegerField(read_only=True)
     title = serializers.CharField(read_only=True)
@@ -51,8 +65,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "rating_to_next_title",
             "games_played", "games_won", "games_drawn", "games_lost",
             "avatar", "created_at",
+            "wallet_balance", "iban",
         ]
-        read_only_fields = ["id", "rating", "games_played", "games_won", "games_drawn", "created_at"]
+        read_only_fields = ["id", "rating", "games_played", "games_won", "games_drawn", "created_at", "wallet_balance"]
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import Room, Game, Move, Donation
+from django.utils import timezone
+from .models import Room, Game, Move, Donation, PlatformSettings, WithdrawalRequest
 
 
 class MoveInline(admin.TabularInline):
@@ -24,3 +25,34 @@ class RoomAdmin(admin.ModelAdmin):
 @admin.register(Donation)
 class DonationAdmin(admin.ModelAdmin):
     list_display = ["id", "room", "donor", "amount", "currency", "status", "created_at"]
+
+
+@admin.register(PlatformSettings)
+class PlatformSettingsAdmin(admin.ModelAdmin):
+    list_display = ["donation_fee_percent"]
+
+    def has_add_permission(self, request):
+        return not PlatformSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(WithdrawalRequest)
+class WithdrawalRequestAdmin(admin.ModelAdmin):
+    list_display = ["user", "amount", "iban_snapshot", "status", "created_at", "processed_at"]
+    list_filter = ["status"]
+    readonly_fields = ["user", "amount", "iban_snapshot", "created_at"]
+    actions = ["mark_paid", "mark_rejected"]
+
+    @admin.action(description="Seçilenleri ödendi olarak işaretle")
+    def mark_paid(self, request, queryset):
+        queryset.filter(status=WithdrawalRequest.STATUS_PENDING).update(
+            status=WithdrawalRequest.STATUS_PAID, processed_at=timezone.now()
+        )
+
+    @admin.action(description="Seçilenleri reddet")
+    def mark_rejected(self, request, queryset):
+        queryset.filter(status=WithdrawalRequest.STATUS_PENDING).update(
+            status=WithdrawalRequest.STATUS_REJECTED, processed_at=timezone.now()
+        )
