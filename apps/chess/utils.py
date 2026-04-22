@@ -1,8 +1,9 @@
 from decimal import Decimal
 
+from django.db import transaction
+
 
 def distribute_donations(game):
-    """Maç bitince tamamlanmış bağışları kazanana aktarır. Berabere → yarı yarıya."""
     from .models import Donation, PlatformSettings
 
     if game.result not in ("white", "black", "draw"):
@@ -45,40 +46,60 @@ def expected_score(rating_a, rating_b):
 
 
 def update_ratings(game, k=32):
-    """Elo rating update after a finished game."""
-    white = game.white_player
-    black = game.black_player
-    if not white or not black:
-        return
+    """Elo rating update. DB lock + ratings_updated flag prevent double-execution."""
+    from django.contrib.auth import get_user_model
+    from .models import Game
 
-    # Don't touch ratings for unfinished/aborted games.
     if game.result in ("ongoing", "aborted"):
         return
+    if not game.white_player_id or not game.black_player_id:
+        return
 
-    ea = expected_score(white.rating, black.rating)
-    eb = 1 - ea
+    with transaction.atomic():
+        # Atomically claim the right to update: flip ratings_updated False→True.
+        # If another consumer already flipped it, updated=0 and we bail out.
+        updated = Game.objects.filter(pk=game.pk, ratings_updated=False).update(
+            ratings_updated=True
+        )
+        if updated == 0:
+            return  # already processed by a concurrent consumer
 
-    if game.result == "white":
-        sa, sb = 1, 0
-    elif game.result == "black":
-        sa, sb = 0, 1
-    else:
-        sa, sb = 0.5, 0.5
+        User = get_user_model()
+        players = {
+            p.id: p
+            for p in User.objects.select_for_update().filter(
+                id__in=[game.white_player_id, game.black_player_id]
+            )
+        }
+        white = players.get(game.white_player_id)
+        black = players.get(game.black_player_id)
+        if not white or not black:
+            return
 
-    white.rating = max(100, round(white.rating + k * (sa - ea)))
-    black.rating = max(100, round(black.rating + k * (sb - eb)))
+        ea = expected_score(white.rating, black.rating)
+        eb = 1 - ea
 
-    white.games_played += 1
-    black.games_played += 1
-    if game.result == "white":
-        white.games_won += 1
-    elif game.result == "black":
-        black.games_won += 1
-    else:
-        white.games_drawn += 1
-        black.games_drawn += 1
+        if game.result == "white":
+            sa, sb = 1, 0
+        elif game.result == "black":
+            sa, sb = 0, 1
+        else:
+            sa, sb = 0.5, 0.5
 
-    white.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
-    black.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
+        white.rating = max(100, round(white.rating + k * (sa - ea)))
+        black.rating = max(100, round(black.rating + k * (sb - eb)))
+
+        white.games_played += 1
+        black.games_played += 1
+        if game.result == "white":
+            white.games_won += 1
+        elif game.result == "black":
+            black.games_won += 1
+        else:
+            white.games_drawn += 1
+            black.games_drawn += 1
+
+        white.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
+        black.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
 
     distribute_donations(game)

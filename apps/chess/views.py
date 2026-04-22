@@ -10,10 +10,11 @@ from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.serializers import Serializer, IntegerField
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
-from .models import Room, Game, Donation
+from .models import Room, Game, Move, Donation
 from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, DonationSerializer
+from .throttles import DonateRateThrottle
 from . import matchmaking
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -96,29 +97,38 @@ class GameDetailView(generics.RetrieveAPIView):
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def platform_stats(request):
-    """
-    Lightweight public stats for the homepage / lobby.
-    - live_games: ongoing games with both players seated.
-    - players_in_live_games: distinct user ids in those games.
-    - users_active_last_15m: Django last_login (updated on JWT login if configured).
-    """
     User = get_user_model()
     now = timezone.now()
     recent_cutoff = now - timedelta(minutes=15)
 
+    # Live games: ongoing with both players seated
     live_qs = Game.objects.filter(
         result=Game.RESULT_ONGOING,
         white_player__isnull=False,
         black_player__isnull=False,
     )
     live_games_count = live_qs.count()
-    player_ids = set()
-    for wid, bid in live_qs.values_list("white_player_id", "black_player_id"):
-        player_ids.add(wid)
-        player_ids.add(bid)
-    players_in_live_games = len(player_ids)
 
-    users_recent_login = User.objects.filter(last_login__gte=recent_cutoff).count()
+    # Players currently in a live game
+    live_player_ids: set[int] = set()
+    for wid, bid in live_qs.values_list("white_player_id", "black_player_id"):
+        live_player_ids.add(wid)
+        live_player_ids.add(bid)
+    players_in_live_games = len(live_player_ids)
+
+    # Active users = made a move in the last 15 min OR currently in a live game
+    recent_move_pairs = (
+        Move.objects.filter(timestamp__gte=recent_cutoff)
+        .values_list("game__white_player_id", "game__black_player_id")
+        .distinct()
+    )
+    recent_active_ids: set[int] = set(live_player_ids)
+    for wid, bid in recent_move_pairs:
+        if wid:
+            recent_active_ids.add(wid)
+        if bid:
+            recent_active_ids.add(bid)
+    users_active_last_15m = len(recent_active_ids)
 
     rooms_waiting = Room.objects.filter(status=Room.STATUS_WAITING).count()
 
@@ -133,7 +143,7 @@ def platform_stats(request):
         {
             "live_games": live_games_count,
             "players_in_live_games": players_in_live_games,
-            "users_active_last_15m": users_recent_login,
+            "users_active_last_15m": users_active_last_15m,
             "rooms_waiting": rooms_waiting,
             "games_finished_today": games_finished_today,
             "matchmaking_queue": mm_queue,
@@ -201,12 +211,22 @@ class MatchmakingLeaveView(APIView):
 
 @api_view(["POST"])
 @permission_classes([permissions.AllowAny])
+@throttle_classes([DonateRateThrottle])
 def create_donation(request, room_id):
     room = get_object_or_404(Room, id=room_id)
+    if room.status != Room.STATUS_ACTIVE:
+        return Response({"error": "Donations are only allowed for active games."}, status=status.HTTP_400_BAD_REQUEST)
+
     serializer = DonationSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    amount_cents = int(serializer.validated_data["amount"] * 100)
+    amount = serializer.validated_data["amount"]
+    if amount <= 0:
+        return Response({"error": "Amount must be positive."}, status=status.HTTP_400_BAD_REQUEST)
+    if amount > 10000:
+        return Response({"error": "Amount exceeds maximum allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+    amount_cents = int(amount * 100)
     currency = serializer.validated_data.get("currency", "usd").lower()
 
     try:

@@ -13,6 +13,7 @@ class GameSerializer(serializers.ModelSerializer):
     white_player = UserPublicSerializer(read_only=True)
     black_player = UserPublicSerializer(read_only=True)
     moves = MoveSerializer(many=True, read_only=True)
+    move_count = serializers.IntegerField(source="moves.count", read_only=True)
     room_id = serializers.UUIDField(read_only=True)
     time_control = serializers.IntegerField(source="room.time_control", read_only=True)
     increment = serializers.IntegerField(source="room.increment", read_only=True)
@@ -24,13 +25,31 @@ class GameSerializer(serializers.ModelSerializer):
             "fen", "pgn", "result",
             "white_time_remaining", "black_time_remaining",
             "time_control", "increment",
-            "started_at", "ended_at", "moves",
+            "started_at", "ended_at", "moves", "move_count",
+        ]
+
+
+class GameSummarySerializer(serializers.ModelSerializer):
+    """Lightweight serializer for room lists — no full move list."""
+    white_player = UserPublicSerializer(read_only=True)
+    black_player = UserPublicSerializer(read_only=True)
+    move_count = serializers.IntegerField(source="moves.count", read_only=True)
+    room_id = serializers.UUIDField(read_only=True)
+    time_control = serializers.IntegerField(source="room.time_control", read_only=True)
+    increment = serializers.IntegerField(source="room.increment", read_only=True)
+
+    class Meta:
+        model = Game
+        fields = [
+            "id", "room_id", "white_player", "black_player",
+            "result", "white_time_remaining", "black_time_remaining",
+            "time_control", "increment", "started_at", "move_count",
         ]
 
 
 class RoomSerializer(serializers.ModelSerializer):
     created_by = UserPublicSerializer(read_only=True)
-    game = GameSerializer(read_only=True)
+    game = GameSummarySerializer(read_only=True)
     spectator_count = serializers.SerializerMethodField()
 
     class Meta:

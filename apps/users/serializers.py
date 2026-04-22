@@ -1,9 +1,11 @@
+import re
 from decimal import Decimal
 
-from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User
+
+IBAN_RE = re.compile(r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{1,30}$")
 
 
 class UserPublicSerializer(serializers.ModelSerializer):
@@ -52,6 +54,11 @@ class WithdrawalRequestSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     games_lost = serializers.IntegerField(read_only=True)
+
+    def validate_iban(self, value):
+        if value and not IBAN_RE.match(value.upper()):
+            raise serializers.ValidationError("Invalid IBAN format.")
+        return value.upper() if value else value
     title = serializers.CharField(read_only=True)
     next_title = serializers.CharField(read_only=True, allow_null=True)
     rating_to_next_title = serializers.IntegerField(read_only=True, allow_null=True)
@@ -71,11 +78,4 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Records last_login so platform stats (recently active users) stay meaningful."""
-
-    def validate(self, attrs):
-        data = super().validate(attrs)
-        user = self.user
-        user.last_login = timezone.now()
-        user.save(update_fields=["last_login"])
-        return data
+    pass

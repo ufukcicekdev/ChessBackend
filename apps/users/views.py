@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -12,10 +13,19 @@ from .serializers import (
 )
 
 
+class LoginRateThrottle(AnonRateThrottle):
+    scope = "login"
+
+
+class RegisterRateThrottle(AnonRateThrottle):
+    scope = "register"
+
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterRateThrottle]
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):
@@ -34,6 +44,7 @@ class LeaderboardView(generics.ListAPIView):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
 
 
 class WithdrawalRequestView(APIView):
