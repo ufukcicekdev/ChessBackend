@@ -73,6 +73,8 @@ class Game(models.Model):
     black_time_remaining = models.IntegerField(default=600)
     started_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
+    # Used for server-side clock updates between moves.
+    last_move_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

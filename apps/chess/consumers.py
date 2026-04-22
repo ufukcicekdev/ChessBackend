@@ -1,5 +1,5 @@
 import json
-import asyncio
+import chess
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
@@ -15,6 +15,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
     Message types sent by client:
       - join:       Player joins the room and picks a color.
       - move:       Player submits a move.
+      - time_loss:  Client reports local clock hit 0 (server validates + ends game).
       - resign:     Player resigns.
       - draw_offer: Player offers a draw.
       - draw_accept / draw_decline
@@ -60,6 +61,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
         handlers = {
             "join": self.handle_join,
             "move": self.handle_move,
+            "time_loss": self.handle_time_loss,
             "resign": self.handle_resign,
             "draw_offer": self.handle_draw_offer,
             "draw_accept": self.handle_draw_accept,
@@ -120,12 +122,13 @@ class ChessConsumer(AsyncWebsocketConsumer):
             self.room_group,
             {
                 "type": "game_state_event",
-                "fen": fen_after,
+                "fen": result["fen"],
                 "pgn": result["pgn"],
                 "last_move": {"uci": uci, "san": san},
                 "move_number": result["move_number"],
                 "white_time": result["white_time"],
                 "black_time": result["black_time"],
+                "is_check": result.get("is_check"),
                 "is_game_over": result["is_game_over"],
                 "game_result": result.get("game_result"),
             },
@@ -136,6 +139,34 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 self.room_group,
                 {"type": "game_over_event", "result": result["game_result"]},
             )
+
+    async def handle_time_loss(self, data):
+        if self.role == "spectator":
+            return
+
+        loser = data.get("loser")  # "white" | "black"
+        if loser not in ("white", "black"):
+            await self.send_error("time_loss requires loser: white|black")
+            return
+        if loser != self.role:
+            await self.send_error("time_loss loser must match your color")
+            return
+
+        ended = await self.end_game_on_timeout(loser)
+        if not ended.get("ok"):
+            await self.send_error(ended.get("error", "Unable to end game on time"))
+            return
+
+        winner = "black" if loser == "white" else "white"
+        await self.channel_layer.group_send(
+            self.room_group,
+            {
+                "type": "game_over_event",
+                "result": winner,
+                "reason": "timeout",
+                "loser": loser,
+            },
+        )
 
     async def handle_resign(self, data):
         if self.role == "spectator":
@@ -229,6 +260,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 "black_player": game.black_player.username if game.black_player else None,
                 "white_time": game.white_time_remaining,
                 "black_time": game.black_time_remaining,
+                "is_game_over": game.result != Game.RESULT_ONGOING,
+                "game_result": game.result if game.result != Game.RESULT_ONGOING else None,
                 "result": game.result,
                 "move_count": game.moves.count(),
             }
@@ -255,12 +288,18 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 game.started_at = timezone.now()
                 room.status = Room.STATUS_ACTIVE
                 room.save(update_fields=["status"])
-            game.save(update_fields=["white_player", "started_at"])
+            # Initialize clocks from room time control when the game actually starts.
+            if game.white_time_remaining == 600 and game.black_time_remaining == 600:
+                game.white_time_remaining = room.time_control
+                game.black_time_remaining = room.time_control
+            game.last_move_at = timezone.now()
+            game.save(update_fields=["white_player", "started_at", "white_time_remaining", "black_time_remaining", "last_move_at"])
             return {"error": None, "color": "white"}
 
         if not game.black_player:
             game.black_player = self.user
-            game.save(update_fields=["black_player"])
+            game.last_move_at = timezone.now()
+            game.save(update_fields=["black_player", "last_move_at"])
             return {"error": None, "color": "black"}
 
         return {"error": "Room is full", "color": None}
@@ -268,19 +307,119 @@ class ChessConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def save_move(self, uci, san, fen_after):
         try:
-            game = Game.objects.get(room_id=self.room_id)
+            game = Game.objects.select_related("room").get(room_id=self.room_id)
         except Game.DoesNotExist:
             return {"error": "Game not found"}
+
+        if game.result != Game.RESULT_ONGOING:
+            return {"error": "Game is already over"}
+
+        if not game.white_player or not game.black_player:
+            return {"error": "Waiting for opponent"}
+
+        room = game.room
+        now = timezone.now()
+
+        board = chess.Board(game.fen)
+        moving_color = chess.WHITE if board.turn else chess.BLACK
+
+        if self.user != (game.white_player if moving_color == chess.WHITE else game.black_player):
+            return {"error": "Not your turn"}
+
+        try:
+            move = chess.Move.from_uci(uci)
+        except ValueError:
+            return {"error": "Invalid UCI"}
+
+        if move not in board.legal_moves:
+            return {"error": "Illegal move"}
+
+        # Apply elapsed time to the side that is moving *before* applying the move.
+        last_ts = game.last_move_at or game.started_at or now
+        elapsed = max(0, int((now - last_ts).total_seconds()))
+        inc = int(room.increment or 0)
+
+        if moving_color == chess.WHITE:
+            game.white_time_remaining = max(0, int(game.white_time_remaining) - elapsed + inc)
+            if game.white_time_remaining <= 0:
+                game.white_time_remaining = 0
+                game.result = Game.RESULT_BLACK
+                game.ended_at = now
+                game.last_move_at = now
+                game.save(
+                    update_fields=[
+                        "white_time_remaining",
+                        "result",
+                        "ended_at",
+                        "last_move_at",
+                    ]
+                )
+                game.room.status = Room.STATUS_FINISHED
+                game.room.save(update_fields=["status"])
+                from .utils import update_ratings
+
+                update_ratings(game)
+                return {
+                    "fen": game.fen,
+                    "pgn": game.pgn,
+                    "move_number": game.moves.count(),
+                    "white_time": game.white_time_remaining,
+                    "black_time": game.black_time_remaining,
+                    "is_check": False,
+                    "is_game_over": True,
+                    "game_result": game.result,
+                }
+        else:
+            game.black_time_remaining = max(0, int(game.black_time_remaining) - elapsed + inc)
+            if game.black_time_remaining <= 0:
+                game.black_time_remaining = 0
+                game.result = Game.RESULT_WHITE
+                game.ended_at = now
+                game.last_move_at = now
+                game.save(
+                    update_fields=[
+                        "black_time_remaining",
+                        "result",
+                        "ended_at",
+                        "last_move_at",
+                    ]
+                )
+                game.room.status = Room.STATUS_FINISHED
+                game.room.save(update_fields=["status"])
+                from .utils import update_ratings
+
+                update_ratings(game)
+                return {
+                    "fen": game.fen,
+                    "pgn": game.pgn,
+                    "move_number": game.moves.count(),
+                    "white_time": game.white_time_remaining,
+                    "black_time": game.black_time_remaining,
+                    "is_check": False,
+                    "is_game_over": True,
+                    "game_result": game.result,
+                }
+
+        san_server = board.san(move)
+        if san_server != san:
+            return {"error": "SAN mismatch"}
+
+        board.push(move)
+        fen_server = board.fen()
+
+        if fen_server != fen_after:
+            return {"error": "FEN mismatch"}
 
         move_number = game.moves.count() + 1
         Move.objects.create(
             game=game,
             move_number=move_number,
-            san=san,
+            san=san_server,
             uci=uci,
-            fen_after=fen_after,
+            fen_after=fen_server,
         )
-        game.fen = fen_after
+        game.fen = fen_server
+        game.last_move_at = now
 
         # Rebuild PGN from moves
         moves = list(game.moves.order_by("move_number").values_list("san", flat=True))
@@ -290,13 +429,48 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 pgn_parts.append(f"{i // 2 + 1}.")
             pgn_parts.append(m)
         game.pgn = " ".join(pgn_parts)
-        game.save(update_fields=["fen", "pgn"])
+
+        outcome = board.outcome(claim_draw=True)
+        if outcome and outcome.winner is not None:
+            game.result = Game.RESULT_WHITE if outcome.winner == chess.WHITE else Game.RESULT_BLACK
+            game.ended_at = now
+        elif outcome and outcome.winner is None and outcome.termination in (
+            chess.Termination.STALEMATE,
+            chess.Termination.INSUFFICIENT_MATERIAL,
+            chess.Termination.FIFTY_MOVES,
+            chess.Termination.THREEFOLD_REPETITION,
+            chess.Termination.SEVENTYFIVE_MOVES,
+            chess.Termination.FIVEFOLD_REPETITION,
+        ):
+            game.result = Game.RESULT_DRAW
+            game.ended_at = now
+
+        game.save(
+            update_fields=[
+                "fen",
+                "pgn",
+                "white_time_remaining",
+                "black_time_remaining",
+                "last_move_at",
+                "result",
+                "ended_at",
+            ]
+        )
+
+        if game.result != Game.RESULT_ONGOING:
+            game.room.status = Room.STATUS_FINISHED
+            game.room.save(update_fields=["status"])
+            from .utils import update_ratings
+
+            update_ratings(game)
 
         return {
+            "fen": game.fen,
             "pgn": game.pgn,
             "move_number": move_number,
             "white_time": game.white_time_remaining,
             "black_time": game.black_time_remaining,
+            "is_check": bool(board.is_check()) if game.result == Game.RESULT_ONGOING else False,
             "is_game_over": game.result != Game.RESULT_ONGOING,
             "game_result": game.result if game.result != Game.RESULT_ONGOING else None,
         }
@@ -308,6 +482,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
             game = Game.objects.select_related("white_player", "black_player").get(
                 room_id=self.room_id
             )
+            if game.result != Game.RESULT_ONGOING:
+                return
             game.result = result
             game.ended_at = timezone.now()
             game.save(update_fields=["result", "ended_at"])
@@ -318,6 +494,57 @@ class ChessConsumer(AsyncWebsocketConsumer):
             update_ratings(game)
         except Game.DoesNotExist:
             pass
+
+    @database_sync_to_async
+    def end_game_on_timeout(self, loser_role: str):
+        try:
+            game = Game.objects.select_related("white_player", "black_player", "room").get(
+                room_id=self.room_id
+            )
+        except Game.DoesNotExist:
+            return {"ok": False, "error": "Game not found"}
+
+        if game.result != Game.RESULT_ONGOING:
+            return {"ok": False, "error": "Game is already over"}
+
+        if not game.white_player or not game.black_player:
+            return {"ok": False, "error": "Waiting for opponent"}
+
+        now = timezone.now()
+        last_ts = game.last_move_at or game.started_at or now
+        elapsed = max(0, int((now - last_ts).total_seconds()))
+
+        # Determine whose clock should be running based on FEN side-to-move.
+        board = chess.Board(game.fen)
+        active = "white" if board.turn == chess.WHITE else "black"
+
+        if loser_role != active:
+            return {"ok": False, "error": "Timeout claim does not match active side"}
+
+        if active == "white":
+            remaining = max(0, int(game.white_time_remaining) - elapsed)
+            if remaining > 0:
+                return {"ok": False, "error": "Clock not exhausted"}
+            game.white_time_remaining = 0
+        else:
+            remaining = max(0, int(game.black_time_remaining) - elapsed)
+            if remaining > 0:
+                return {"ok": False, "error": "Clock not exhausted"}
+            game.black_time_remaining = 0
+
+        winner = "black" if active == "white" else "white"
+        game.result = winner
+        game.ended_at = now
+        game.last_move_at = now
+        game.save(update_fields=["white_time_remaining", "black_time_remaining", "result", "ended_at", "last_move_at"])
+
+        game.room.status = Room.STATUS_FINISHED
+        game.room.save(update_fields=["status"])
+
+        from .utils import update_ratings
+
+        update_ratings(game)
+        return {"ok": True}
 
     async def send_error(self, message):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))

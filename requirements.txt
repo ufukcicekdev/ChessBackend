@@ -12,3 +12,4 @@ python-decouple==3.8
 daphne==4.1.2
 whitenoise==6.9.0
 gunicorn==23.0.0
+chess==1.11.2
