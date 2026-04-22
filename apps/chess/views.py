@@ -2,10 +2,14 @@ import stripe
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.serializers import Serializer, IntegerField
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from .models import Room, Game, Donation
 from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, DonationSerializer
+from . import matchmaking
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
@@ -61,6 +65,62 @@ class GameDetailView(generics.RetrieveAPIView):
     serializer_class = GameSerializer
     lookup_field = "id"
     permission_classes = [permissions.AllowAny]
+
+
+class _MatchmakingSerializer(Serializer):
+    time_control = IntegerField(min_value=10)
+    increment = IntegerField(min_value=0, required=False, default=0)
+
+
+class MatchmakingJoinView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        s = _MatchmakingSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            result = matchmaking.join_queue(
+                user=request.user,
+                time_control=s.validated_data["time_control"],
+                increment=s.validated_data["increment"],
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"status": result.status, "room_id": result.room_id})
+
+
+class MatchmakingStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        s = _MatchmakingSerializer(data=request.query_params)
+        s.is_valid(raise_exception=True)
+        try:
+            result = matchmaking.status(
+                user=request.user,
+                time_control=s.validated_data["time_control"],
+                increment=s.validated_data["increment"],
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"status": result.status, "room_id": result.room_id})
+
+
+class MatchmakingLeaveView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        s = _MatchmakingSerializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        try:
+            matchmaking.leave_queue(
+                user=request.user,
+                time_control=s.validated_data["time_control"],
+                increment=s.validated_data["increment"],
+            )
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({"status": "left"})
 
 
 @api_view(["POST"])
