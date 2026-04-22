@@ -10,3 +10,5 @@ celery==5.3.6
 stripe==8.8.0
 python-decouple==3.8
 daphne==4.0.0
+whitenoise==6.7.0
+gunicorn==22.0.0
