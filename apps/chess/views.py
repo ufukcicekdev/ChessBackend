@@ -15,7 +15,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.response import Response
 from .models import Room, Game, Move, Donation, Challenge
 from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, GameHistorySummarySerializer, DonationSerializer
-from .throttles import DonateRateThrottle
+from .throttles import DonateRateThrottle, ChallengeRateThrottle
 from . import matchmaking
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -327,6 +327,7 @@ User = get_user_model()
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@throttle_classes([ChallengeRateThrottle])
 def send_challenge(request):
     from .models import PlatformSettings
     username = request.data.get("username")
@@ -383,8 +384,8 @@ def accept_challenge(request, challenge_id):
         Challenge, id=challenge_id, challenged=request.user, status=Challenge.STATUS_PENDING
     )
 
-    # Expire challenge if older than 60 seconds
-    if (timezone.now() - challenge.created_at).total_seconds() > 60:
+    # Expire challenge if older than 5 minutes
+    if (timezone.now() - challenge.created_at).total_seconds() > 300:
         challenge.status = Challenge.STATUS_EXPIRED
         challenge.save(update_fields=["status"])
         return Response({"error": "Challenge expired"}, status=400)
@@ -434,7 +435,7 @@ def sent_challenges(request):
     challenges = Challenge.objects.filter(
         challenger=request.user,
         created_at__gte=cutoff,
-    ).exclude(status=Challenge.STATUS_EXPIRED).select_related("challenged")
+    ).select_related("challenged")
     data = [
         {
             "id": str(c.id),
@@ -512,7 +513,7 @@ def challenge_status(request, challenge_id):
 @permission_classes([IsAuthenticated])
 def pending_challenges(request):
     # Expire old ones first
-    cutoff = timezone.now() - timedelta(seconds=60)
+    cutoff = timezone.now() - timedelta(seconds=300)
     Challenge.objects.filter(
         challenged=request.user, status=Challenge.STATUS_PENDING, created_at__lt=cutoff
     ).update(status=Challenge.STATUS_EXPIRED)

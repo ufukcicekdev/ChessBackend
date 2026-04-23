@@ -61,6 +61,20 @@ def abandon_game_task(self, room_id: str, color: str):
     )
 
 
+@shared_task
+def expire_old_challenges():
+    """Mark pending challenges older than 5 minutes as expired."""
+    from django.utils import timezone
+    from datetime import timedelta
+    from .models import Challenge
+    cutoff = timezone.now() - timedelta(seconds=300)
+    updated = Challenge.objects.filter(
+        status=Challenge.STATUS_PENDING,
+        created_at__lt=cutoff,
+    ).update(status=Challenge.STATUS_EXPIRED)
+    return f"Expired {updated} challenge(s)"
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=5)
 def update_ratings_task(self, game_id: str):
     """Deferred rating update — runs in Celery worker, not in the WS consumer."""

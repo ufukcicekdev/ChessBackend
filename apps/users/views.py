@@ -39,7 +39,22 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 class LeaderboardView(generics.ListAPIView):
     serializer_class = UserPublicSerializer
     permission_classes = [permissions.AllowAny]
-    queryset = User.objects.order_by("-rating")[:50]
+
+    def get_queryset(self):
+        qs = User.objects.order_by("-rating")
+        q = self.request.query_params.get("q", "").strip()
+        if q:
+            qs = qs.filter(username__icontains=q)
+        return qs[:50]
+
+
+class MyRankView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rank = User.objects.filter(rating__gt=request.user.rating).count() + 1
+        total = User.objects.count()
+        return Response({"rank": rank, "total": total})
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):

@@ -11,3 +11,7 @@ class RegisterRateThrottle(AnonRateThrottle):
 
 class DonateRateThrottle(UserRateThrottle):
     scope = "donate"
+
+
+class ChallengeRateThrottle(UserRateThrottle):
+    scope = "challenge"

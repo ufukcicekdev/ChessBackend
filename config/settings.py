@@ -105,6 +105,7 @@ REST_FRAMEWORK = {
         "login": "10/minute",
         "register": "5/minute",
         "donate": "20/minute",
+        "challenge": "10/minute",
     },
 }
 
@@ -161,6 +162,14 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # fair dispatch under burst load
+
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    "expire-old-challenges": {
+        "task": "apps.chess.tasks.expire_old_challenges",
+        "schedule": 60.0,  # every minute
+    },
+}
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
