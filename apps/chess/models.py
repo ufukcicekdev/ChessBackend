@@ -183,3 +183,29 @@ class Donation(models.Model):
 
     def __str__(self):
         return f"${self.amount} to room {self.room_id}"
+
+
+class Challenge(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_ACCEPTED = "accepted"
+    STATUS_DECLINED = "declined"
+    STATUS_EXPIRED = "expired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    challenger = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sent_challenges"
+    )
+    challenged = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_challenges"
+    )
+    time_control = models.IntegerField(default=300)
+    increment = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, default=STATUS_PENDING)
+    room = models.ForeignKey(Room, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.challenger} → {self.challenged} [{self.status}]"

@@ -13,7 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.serializers import Serializer, IntegerField
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
-from .models import Room, Game, Move, Donation
+from .models import Room, Game, Move, Donation, Challenge
 from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, GameHistorySummarySerializer, DonationSerializer
 from .throttles import DonateRateThrottle
 from . import matchmaking
@@ -304,3 +304,105 @@ def stripe_webhook(request):
         Donation.objects.filter(stripe_payment_intent=intent_id).update(status="completed")
 
     return Response({"status": "ok"})
+
+
+# ── Challenge (game invite) endpoints ─────────────────────────────────────────
+
+User = get_user_model()
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def send_challenge(request):
+    username = request.data.get("username")
+    time_control = int(request.data.get("time_control", 300))
+    increment = int(request.data.get("increment", 0))
+
+    if not username:
+        return Response({"error": "username required"}, status=400)
+
+    try:
+        challenged = User.objects.get(username=username)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"}, status=404)
+
+    if challenged == request.user:
+        return Response({"error": "Cannot challenge yourself"}, status=400)
+
+    # Cancel any existing pending challenge between these two users
+    Challenge.objects.filter(
+        challenger=request.user, challenged=challenged, status=Challenge.STATUS_PENDING
+    ).update(status=Challenge.STATUS_EXPIRED)
+
+    challenge = Challenge.objects.create(
+        challenger=request.user,
+        challenged=challenged,
+        time_control=time_control,
+        increment=increment,
+    )
+    return Response({"id": str(challenge.id)}, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def accept_challenge(request, challenge_id):
+    challenge = get_object_or_404(
+        Challenge, id=challenge_id, challenged=request.user, status=Challenge.STATUS_PENDING
+    )
+
+    # Expire challenge if older than 60 seconds
+    if (timezone.now() - challenge.created_at).total_seconds() > 60:
+        challenge.status = Challenge.STATUS_EXPIRED
+        challenge.save(update_fields=["status"])
+        return Response({"error": "Challenge expired"}, status=400)
+
+    # Create room and assign players
+    room = Room.objects.create(
+        time_control=challenge.time_control,
+        increment=challenge.increment,
+        created_by=challenge.challenger,
+        is_public=True,
+    )
+    challenge.status = Challenge.STATUS_ACCEPTED
+    challenge.room = room
+    challenge.save(update_fields=["status", "room"])
+
+    return Response({"room_id": str(room.id)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def decline_challenge(request, challenge_id):
+    challenge = get_object_or_404(
+        Challenge, id=challenge_id, challenged=request.user, status=Challenge.STATUS_PENDING
+    )
+    challenge.status = Challenge.STATUS_DECLINED
+    challenge.save(update_fields=["status"])
+    return Response({"status": "declined"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pending_challenges(request):
+    # Expire old ones first
+    cutoff = timezone.now() - timedelta(seconds=60)
+    Challenge.objects.filter(
+        challenged=request.user, status=Challenge.STATUS_PENDING, created_at__lt=cutoff
+    ).update(status=Challenge.STATUS_EXPIRED)
+
+    challenges = Challenge.objects.filter(
+        challenged=request.user, status=Challenge.STATUS_PENDING
+    ).select_related("challenger")
+
+    data = [
+        {
+            "id": str(c.id),
+            "challenger": c.challenger.username,
+            "challenger_rating": getattr(c.challenger, "rating", None),
+            "time_control": c.time_control,
+            "increment": c.increment,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in challenges
+    ]
+    return Response(data)
