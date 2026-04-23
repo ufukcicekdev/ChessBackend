@@ -416,6 +416,78 @@ def decline_challenge(request, challenge_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def sent_challenges(request):
+    """Returns recent sent challenges with their current status."""
+    cutoff = timezone.now() - timedelta(minutes=10)
+    challenges = Challenge.objects.filter(
+        challenger=request.user,
+        created_at__gte=cutoff,
+    ).exclude(status=Challenge.STATUS_EXPIRED).select_related("challenged")
+    data = [
+        {
+            "id": str(c.id),
+            "challenged": c.challenged.username,
+            "challenged_rating": getattr(c.challenged, "rating", None),
+            "time_control": c.time_control,
+            "increment": c.increment,
+            "status": c.status,
+            "room_id": str(c.room_id) if c.room_id else None,
+            "wager_amount": str(c.wager_amount) if c.wager_amount else None,
+            "created_at": c.created_at.isoformat(),
+        }
+        for c in challenges
+    ]
+    return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def challenge_history(request):
+    """Returns all challenges the user sent or received, newest first."""
+    challenges = Challenge.objects.filter(
+        models.Q(challenger=request.user) | models.Q(challenged=request.user)
+    ).exclude(status=Challenge.STATUS_PENDING).select_related(
+        "challenger", "challenged", "room", "room__game", "room__game__white_player", "room__game__black_player"
+    ).order_by("-created_at")[:50]
+
+    data = []
+    for c in challenges:
+        is_challenger = c.challenger_id == request.user.id
+        opponent = c.challenged if is_challenger else c.challenger
+        opponent_rating = getattr(opponent, "rating", None)
+
+        entry = {
+            "id": str(c.id),
+            "opponent": opponent.username,
+            "opponent_rating": opponent_rating,
+            "time_control": c.time_control,
+            "increment": c.increment,
+            "status": c.status,
+            "is_challenger": is_challenger,
+            "room_id": str(c.room_id) if c.room_id else None,
+            "wager_amount": str(c.wager_amount) if c.wager_amount else None,
+            "created_at": c.created_at.isoformat(),
+        }
+
+        if c.room_id and c.room:
+            room = c.room
+            entry["game_result"] = room.result
+            try:
+                game = room.game
+                entry["white_player"] = game.white_player.username if game.white_player else None
+                entry["black_player"] = game.black_player.username if game.black_player else None
+                entry["move_count"] = game.moves.count()
+                entry["game_id"] = str(game.id)
+            except Exception:
+                pass
+
+        data.append(entry)
+
+    return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def challenge_status(request, challenge_id):
     challenge = get_object_or_404(Challenge, id=challenge_id, challenger=request.user)
     return Response({

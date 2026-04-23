@@ -4,7 +4,7 @@ from .views import (
     GameHistoryView, GameRecentListView, GameDetailView,
     create_donation, stripe_webhook, platform_stats, platform_features, ws_ticket,
     MatchmakingJoinView, MatchmakingStatusView, MatchmakingLeaveView,
-    send_challenge, accept_challenge, decline_challenge, pending_challenges, challenge_status,
+    send_challenge, accept_challenge, decline_challenge, pending_challenges, challenge_status, sent_challenges, challenge_history,
 )
 
 urlpatterns = [
@@ -22,8 +22,10 @@ urlpatterns = [
     path("features/", platform_features, name="platform-features"),
     path("webhook/stripe/", stripe_webhook, name="stripe-webhook"),
     path("challenges/", send_challenge, name="challenge-send"),
+    path("challenges/sent/", sent_challenges, name="challenge-sent"),
     path("challenges/<uuid:challenge_id>/status/", challenge_status, name="challenge-status"),
     path("challenges/pending/", pending_challenges, name="challenge-pending"),
     path("challenges/<uuid:challenge_id>/accept/", accept_challenge, name="challenge-accept"),
     path("challenges/<uuid:challenge_id>/decline/", decline_challenge, name="challenge-decline"),
+    path("challenges/history/", challenge_history, name="challenge-history"),
 ]
