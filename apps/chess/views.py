@@ -416,6 +416,16 @@ def decline_challenge(request, challenge_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def challenge_status(request, challenge_id):
+    challenge = get_object_or_404(Challenge, id=challenge_id, challenger=request.user)
+    return Response({
+        "status": challenge.status,
+        "room_id": str(challenge.room_id) if challenge.room_id else None,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def pending_challenges(request):
     # Expire old ones first
     cutoff = timezone.now() - timedelta(seconds=60)
