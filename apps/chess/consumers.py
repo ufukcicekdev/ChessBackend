@@ -1,10 +1,13 @@
 import asyncio
 import json
+import logging
 import chess
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
 from .models import Game, Move, Room
+
+logger = logging.getLogger(__name__)
 
 ABANDON_GRACE_SECONDS = 60
 
@@ -193,9 +196,11 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
         result = await self.save_move(uci, san, fen_after)
         if result.get("error"):
+            logger.warning("Move rejected room=%s user=%s error=%s uci=%s", self.room_id, getattr(self.user, 'username', '?'), result["error"], uci)
             await self.send_error(result["error"])
             return
 
+        logger.info("Move accepted room=%s user=%s uci=%s group=%s", self.room_id, getattr(self.user, 'username', '?'), uci, self.room_group)
         extras = await self.get_player_rating_extras()
 
         # Broadcast updated state to all (players + spectators)
@@ -302,6 +307,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
         # Ensure the websocket message type is the public one ("game_state").
         payload = {k: v for k, v in event.items() if k != "type"}
         payload["type"] = "game_state"
+        logger.info("Sending game_state to channel=%s fen=%s", self.channel_name[:20], payload.get("fen", "")[:30])
         await self.send(text_data=json.dumps(payload))
 
     async def player_joined_event(self, event):
