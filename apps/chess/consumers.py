@@ -116,6 +116,9 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 )
 
     async def receive(self, text_data):
+        if len(text_data) > 2048:
+            await self.send_error("Message too large")
+            return
         try:
             data = json.loads(text_data)
         except json.JSONDecodeError:

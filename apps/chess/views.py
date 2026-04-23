@@ -43,19 +43,19 @@ class RoomListCreateView(generics.ListCreateAPIView):
         return RoomSerializer
 
     def get_queryset(self):
-        qs = Room.objects.select_related("created_by", "game").filter(is_public=True)
+        qs = Room.objects.select_related(
+            "created_by", "game", "game__white_player", "game__black_player"
+        ).filter(is_public=True)
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)
-            # "Live games" should not include rooms where the chess game has already ended,
-            # even if the room row wasn't updated for some reason.
             if status_filter == Room.STATUS_ACTIVE:
                 qs = qs.filter(
                     game__isnull=False,
                     game__white_player__isnull=False,
                     game__black_player__isnull=False,
                     game__result=Game.RESULT_ONGOING,
-                    game__moves__isnull=False,  # at least one move made
+                    game__moves__isnull=False,
                 ).distinct()
         return qs
 

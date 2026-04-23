@@ -48,6 +48,20 @@ class LeaderboardView(generics.ListAPIView):
         return qs[:50]
 
 
+class PublicProfileView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, username):
+        from django.shortcuts import get_object_or_404
+        user = get_object_or_404(User, username=username)
+        rank = User.objects.filter(rating__gt=user.rating).count() + 1
+        total = User.objects.count()
+        data = UserPublicSerializer(user).data
+        data["rank"] = rank
+        data["total"] = total
+        return Response(data)
+
+
 class MyRankView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

@@ -11,6 +11,7 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     wallet_balance = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     iban = models.CharField(max_length=34, blank=True)
+    username_changed_at = models.DateTimeField(null=True, blank=True)
 
     # Thresholds are inclusive minimum ratings for a title, ordered highest -> lowest.
     TITLE_THRESHOLDS = [

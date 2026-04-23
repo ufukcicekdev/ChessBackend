@@ -85,12 +85,25 @@ class UserProfileSerializer(serializers.ModelSerializer):
         extra_kwargs = {"iban": {"write_only": True}}
 
     def validate_username(self, value):
+        from django.utils import timezone
+        from datetime import timedelta
         user = self.instance
         if User.objects.filter(username=value).exclude(pk=user.pk).exists():
             raise serializers.ValidationError("This username is already taken.")
         if len(value) < 3:
             raise serializers.ValidationError("Username must be at least 3 characters.")
+        if user.username_changed_at:
+            cooldown_end = user.username_changed_at + timedelta(days=30)
+            if timezone.now() < cooldown_end:
+                days_left = (cooldown_end - timezone.now()).days + 1
+                raise serializers.ValidationError(f"You can change your username again in {days_left} day(s).")
         return value
+
+    def update(self, instance, validated_data):
+        from django.utils import timezone
+        if "username" in validated_data and validated_data["username"] != instance.username:
+            instance.username_changed_at = timezone.now()
+        return super().update(instance, validated_data)
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
