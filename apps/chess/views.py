@@ -431,6 +431,11 @@ def cancel_challenge(request, challenge_id):
 @permission_classes([IsAuthenticated])
 def sent_challenges(request):
     """Returns recent sent challenges with their current status."""
+    expire_cutoff = timezone.now() - timedelta(seconds=300)
+    Challenge.objects.filter(
+        challenger=request.user, status=Challenge.STATUS_PENDING, created_at__lt=expire_cutoff
+    ).update(status=Challenge.STATUS_EXPIRED)
+
     cutoff = timezone.now() - timedelta(minutes=10)
     challenges = Challenge.objects.filter(
         challenger=request.user,
@@ -503,6 +508,12 @@ def challenge_history(request):
 @permission_classes([IsAuthenticated])
 def challenge_status(request, challenge_id):
     challenge = get_object_or_404(Challenge, id=challenge_id, challenger=request.user)
+    # DB-level fallback: expire if Celery hasn't run yet
+    if challenge.status == Challenge.STATUS_PENDING:
+        cutoff = timezone.now() - timedelta(seconds=300)
+        if challenge.created_at < cutoff:
+            challenge.status = Challenge.STATUS_EXPIRED
+            challenge.save(update_fields=["status"])
     return Response({
         "status": challenge.status,
         "room_id": str(challenge.room_id) if challenge.room_id else None,
