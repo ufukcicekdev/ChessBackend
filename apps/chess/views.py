@@ -306,6 +306,20 @@ def stripe_webhook(request):
     return Response({"status": "ok"})
 
 
+@api_view(["GET"])
+@permission_classes([permissions.AllowAny])
+def platform_features(request):
+    """Returns feature flags for the frontend."""
+    from .models import PlatformSettings
+    s = PlatformSettings.get()
+    return Response({
+        "paid_challenges_enabled": s.paid_challenges_enabled,
+        "challenge_fee_percent": str(s.challenge_fee_percent),
+        "challenge_min_wager": str(s.challenge_min_wager),
+        "challenge_max_wager": str(s.challenge_max_wager),
+    })
+
+
 # ── Challenge (game invite) endpoints ─────────────────────────────────────────
 
 User = get_user_model()
@@ -314,9 +328,11 @@ User = get_user_model()
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def send_challenge(request):
+    from .models import PlatformSettings
     username = request.data.get("username")
     time_control = int(request.data.get("time_control", 300))
     increment = int(request.data.get("increment", 0))
+    wager_amount = request.data.get("wager_amount")  # None for free challenges
 
     if not username:
         return Response({"error": "username required"}, status=400)
@@ -329,6 +345,22 @@ def send_challenge(request):
     if challenged == request.user:
         return Response({"error": "Cannot challenge yourself"}, status=400)
 
+    # Validate paid challenge
+    if wager_amount is not None:
+        settings_obj = PlatformSettings.get()
+        if not settings_obj.paid_challenges_enabled:
+            return Response({"error": "Paid challenges are not enabled"}, status=400)
+        try:
+            wager_amount = float(wager_amount)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid wager amount"}, status=400)
+        if wager_amount < float(settings_obj.challenge_min_wager):
+            return Response({"error": f"Minimum wager is ${settings_obj.challenge_min_wager}"}, status=400)
+        if wager_amount > float(settings_obj.challenge_max_wager):
+            return Response({"error": f"Maximum wager is ${settings_obj.challenge_max_wager}"}, status=400)
+    else:
+        wager_amount = None
+
     # Cancel any existing pending challenge between these two users
     Challenge.objects.filter(
         challenger=request.user, challenged=challenged, status=Challenge.STATUS_PENDING
@@ -339,6 +371,7 @@ def send_challenge(request):
         challenged=challenged,
         time_control=time_control,
         increment=increment,
+        wager_amount=wager_amount,
     )
     return Response({"id": str(challenge.id)}, status=201)
 
@@ -401,6 +434,7 @@ def pending_challenges(request):
             "challenger_rating": getattr(c.challenger, "rating", None),
             "time_control": c.time_control,
             "increment": c.increment,
+            "wager_amount": str(c.wager_amount) if c.wager_amount else None,
             "created_at": c.created_at.isoformat(),
         }
         for c in challenges

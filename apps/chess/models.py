@@ -120,6 +120,22 @@ class PlatformSettings(models.Model):
         max_digits=5, decimal_places=2, default=15,
         help_text="Bağışlardan alınan platform komisyonu (%). Örn: 15 → %15"
     )
+    paid_challenges_enabled = models.BooleanField(
+        default=False,
+        help_text="Ücretli challenge sistemini aktif eder. Stripe entegrasyonu gerektirir."
+    )
+    challenge_fee_percent = models.DecimalField(
+        max_digits=5, decimal_places=2, default=10,
+        help_text="Ücretli challenge kazançlarından alınan platform komisyonu (%). Örn: 10 → %10"
+    )
+    challenge_min_wager = models.DecimalField(
+        max_digits=8, decimal_places=2, default=1.00,
+        help_text="Minimum bahis miktarı (USD)"
+    )
+    challenge_max_wager = models.DecimalField(
+        max_digits=8, decimal_places=2, default=100.00,
+        help_text="Maksimum bahis miktarı (USD)"
+    )
 
     class Meta:
         verbose_name = "Platform Settings"
@@ -202,6 +218,15 @@ class Challenge(models.Model):
     increment = models.IntegerField(default=0)
     status = models.CharField(max_length=20, default=STATUS_PENDING)
     room = models.ForeignKey(Room, null=True, blank=True, on_delete=models.SET_NULL)
+
+    # Paid challenge fields (only used when paid_challenges_enabled=True)
+    wager_amount = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    challenger_payment_intent = models.CharField(max_length=200, blank=True)
+    challenged_payment_intent = models.CharField(max_length=200, blank=True)
+    challenger_paid = models.BooleanField(default=False)
+    challenged_paid = models.BooleanField(default=False)
+    payout_intent = models.CharField(max_length=200, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
