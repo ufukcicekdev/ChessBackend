@@ -7,24 +7,20 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddIndex(
-            model_name="room",
-            index=models.Index(fields=["status"], name="room_status_idx"),
-        ),
-        migrations.AddIndex(
-            model_name="game",
-            index=models.Index(fields=["result"], name="game_result_idx"),
-        ),
-        migrations.AddIndex(
-            model_name="game",
-            index=models.Index(fields=["ended_at"], name="game_ended_at_idx"),
-        ),
-        migrations.AddIndex(
-            model_name="game",
-            index=models.Index(fields=["result", "ended_at"], name="game_result_ended_idx"),
-        ),
-        migrations.AddIndex(
-            model_name="move",
-            index=models.Index(fields=["timestamp"], name="move_timestamp_idx"),
+        migrations.RunSQL(
+            sql="""
+                CREATE INDEX IF NOT EXISTS room_status_idx ON chess_room (status);
+                CREATE INDEX IF NOT EXISTS game_result_idx ON chess_game (result);
+                CREATE INDEX IF NOT EXISTS game_ended_at_idx ON chess_game (ended_at);
+                CREATE INDEX IF NOT EXISTS game_result_ended_idx ON chess_game (result, ended_at);
+                CREATE INDEX IF NOT EXISTS move_timestamp_idx ON chess_move (timestamp);
+            """,
+            reverse_sql="""
+                DROP INDEX IF EXISTS room_status_idx;
+                DROP INDEX IF EXISTS game_result_idx;
+                DROP INDEX IF EXISTS game_ended_at_idx;
+                DROP INDEX IF EXISTS game_result_ended_idx;
+                DROP INDEX IF EXISTS move_timestamp_idx;
+            """,
         ),
     ]
