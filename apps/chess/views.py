@@ -414,6 +414,18 @@ def decline_challenge(request, challenge_id):
     return Response({"status": "declined"})
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cancel_challenge(request, challenge_id):
+    """Challenger cancels their own pending challenge."""
+    challenge = get_object_or_404(
+        Challenge, id=challenge_id, challenger=request.user, status=Challenge.STATUS_PENDING
+    )
+    challenge.status = Challenge.STATUS_EXPIRED
+    challenge.save(update_fields=["status"])
+    return Response({"status": "cancelled"})
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def sent_challenges(request):
@@ -445,7 +457,7 @@ def sent_challenges(request):
 def challenge_history(request):
     """Returns all challenges the user sent or received, newest first."""
     challenges = Challenge.objects.filter(
-        models.Q(challenger=request.user) | models.Q(challenged=request.user)
+        Q(challenger=request.user) | Q(challenged=request.user)
     ).exclude(status=Challenge.STATUS_PENDING).select_related(
         "challenger", "challenged", "room", "room__game", "room__game__white_player", "room__game__black_player"
     ).order_by("-created_at")[:50]
