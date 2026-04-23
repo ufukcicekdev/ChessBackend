@@ -86,6 +86,11 @@ else:
     # Fallback for environments without Redis (single instance only).
     CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
 
+_throttle_classes = [] if config("LOAD_TEST_MODE", default=False, cast=bool) else [
+    "rest_framework.throttling.AnonRateThrottle",
+    "rest_framework.throttling.UserRateThrottle",
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
@@ -93,10 +98,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticatedOrReadOnly",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
-    "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
-    ],
+    "DEFAULT_THROTTLE_CLASSES": _throttle_classes,
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "200/minute",
@@ -122,7 +124,7 @@ X_FRAME_OPTIONS = "DENY"
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_SSL_REDIRECT = True
+    SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 

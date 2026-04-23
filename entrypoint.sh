@@ -19,4 +19,4 @@ echo "Collecting static files..."
 python manage.py collectstatic --noinput || true
 
 echo "Starting Daphne on port ${PORT_TO_BIND}..."
-exec daphne -b 0.0.0.0 -p "${PORT_TO_BIND}" config.asgi:application
+exec daphne -b 0.0.0.0 -p "${PORT_TO_BIND}" --proxy-headers -t 60 config.asgi:application
