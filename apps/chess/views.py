@@ -55,7 +55,8 @@ class RoomListCreateView(generics.ListCreateAPIView):
                     game__white_player__isnull=False,
                     game__black_player__isnull=False,
                     game__result=Game.RESULT_ONGOING,
-                )
+                    game__moves__isnull=False,  # at least one move made
+                ).distinct()
         return qs
 
     def create(self, request, *args, **kwargs):
