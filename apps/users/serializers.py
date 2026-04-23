@@ -58,6 +58,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
     next_title = serializers.CharField(read_only=True, allow_null=True)
     rating_to_next_title = serializers.IntegerField(read_only=True, allow_null=True)
     masked_iban = serializers.SerializerMethodField(read_only=True)
+    username_cooldown_days = serializers.SerializerMethodField(read_only=True)
+
+    def get_username_cooldown_days(self, obj):
+        """Returns remaining cooldown days, or 0 if change is allowed."""
+        from django.utils import timezone
+        from datetime import timedelta
+        if not obj.username_changed_at:
+            return 0
+        remaining = (obj.username_changed_at + timedelta(days=30)) - timezone.now()
+        return max(0, remaining.days)
 
     def get_masked_iban(self, obj):
         iban = obj.iban
@@ -80,6 +90,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "games_played", "games_won", "games_drawn", "games_lost",
             "avatar", "created_at",
             "wallet_balance", "iban", "masked_iban",
+            "username_cooldown_days",
         ]
         read_only_fields = ["id", "email", "rating", "games_played", "games_won", "games_drawn", "created_at", "wallet_balance"]
         extra_kwargs = {"iban": {"write_only": True}}
