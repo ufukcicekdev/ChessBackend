@@ -105,14 +105,15 @@ class ChessConsumer(AsyncWebsocketConsumer):
             )
             if await self.is_game_ongoing():
                 loop = asyncio.get_event_loop()
-                scheduled = await loop.run_in_executor(
-                    None, _schedule_abandon_sync, str(self.room_id), self.role
-                )
-                if not scheduled:
-                    # Redis unavailable — fall back to in-process timer (single instance only)
-                    key = (self.room_id, self.role)
+                # Always start in-process timer (works even without Celery worker)
+                key = (self.room_id, self.role)
+                if key not in _pending_abandons:
                     task = asyncio.create_task(self._abandon_after_grace(key))
                     _pending_abandons[key] = task
+                # Also try Celery for multi-instance setups (best-effort)
+                await loop.run_in_executor(
+                    None, _schedule_abandon_sync, str(self.room_id), self.role
+                )
 
     async def receive(self, text_data):
         try:
