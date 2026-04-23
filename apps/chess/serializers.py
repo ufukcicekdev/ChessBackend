@@ -29,6 +29,23 @@ class GameSerializer(serializers.ModelSerializer):
         ]
 
 
+class GameHistorySummarySerializer(serializers.ModelSerializer):
+    """Lightweight serializer for history/recent lists — no full move list."""
+    white_player = UserPublicSerializer(read_only=True)
+    black_player = UserPublicSerializer(read_only=True)
+    move_count = serializers.IntegerField(source="moves.count", read_only=True)
+    time_control = serializers.IntegerField(source="room.time_control", read_only=True)
+    increment = serializers.IntegerField(source="room.increment", read_only=True)
+
+    class Meta:
+        model = Game
+        fields = [
+            "id", "white_player", "black_player",
+            "result", "white_time_remaining", "black_time_remaining",
+            "time_control", "increment", "started_at", "ended_at", "move_count",
+        ]
+
+
 class GameSummarySerializer(serializers.ModelSerializer):
     """Lightweight serializer for room lists — no full move list."""
     white_player = UserPublicSerializer(read_only=True)
@@ -79,3 +96,8 @@ class DonationSerializer(serializers.ModelSerializer):
         model = Donation
         fields = ["id", "amount", "currency", "message", "status", "created_at"]
         read_only_fields = ["id", "status", "created_at"]
+
+    def validate_message(self, value):
+        # Strip HTML tags — plain text only
+        import re
+        return re.sub(r"<[^>]+>", "", value).strip()

@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     RoomListCreateView, RoomDetailView,
     GameHistoryView, GameRecentListView, GameDetailView,
-    create_donation, stripe_webhook, platform_stats,
+    create_donation, stripe_webhook, platform_stats, ws_ticket,
     MatchmakingJoinView, MatchmakingStatusView, MatchmakingLeaveView,
 )
 
@@ -17,5 +17,6 @@ urlpatterns = [
     path("matchmaking/join/", MatchmakingJoinView.as_view(), name="matchmaking-join"),
     path("matchmaking/status/", MatchmakingStatusView.as_view(), name="matchmaking-status"),
     path("matchmaking/leave/", MatchmakingLeaveView.as_view(), name="matchmaking-leave"),
+    path("ws-ticket/", ws_ticket, name="ws-ticket"),
     path("webhook/stripe/", stripe_webhook, name="stripe-webhook"),
 ]

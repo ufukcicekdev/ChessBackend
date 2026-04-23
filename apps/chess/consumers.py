@@ -8,8 +8,53 @@ from .models import Game, Move, Room
 
 ABANDON_GRACE_SECONDS = 60
 
-# (room_id, color) → asyncio.Task
+# Fallback in-process dict used only when Redis is unavailable (single-instance mode).
 _pending_abandons: dict[tuple, asyncio.Task] = {}
+
+
+def _get_redis():
+    try:
+        import redis as redis_lib
+        from django.conf import settings
+        r = redis_lib.from_url(settings.REDIS_URL or "", decode_responses=True)
+        r.ping()
+        return r
+    except Exception:
+        return None
+
+
+def _schedule_abandon_sync(room_id: str, color: str):
+    """Schedule a Celery abandon task; return True if scheduled via Redis."""
+    r = _get_redis()
+    if not r:
+        return False
+    from .tasks import abandon_game_task
+    sentinel = f"abandon:{room_id}:{color}"
+    task_key = f"abandon_task:{room_id}:{color}"
+    r.setex(sentinel, ABANDON_GRACE_SECONDS + 30, "1")
+    result = abandon_game_task.apply_async(
+        args=[room_id, color],
+        countdown=ABANDON_GRACE_SECONDS,
+    )
+    r.setex(task_key, ABANDON_GRACE_SECONDS + 30, result.id)
+    return True
+
+
+def _cancel_abandon_sync(room_id: str, color: str):
+    """Revoke the pending Celery abandon task; return True if one was cancelled."""
+    r = _get_redis()
+    if not r:
+        return False
+    sentinel = f"abandon:{room_id}:{color}"
+    task_key = f"abandon_task:{room_id}:{color}"
+    task_id = r.get(task_key)
+    if not task_id:
+        return False
+    r.delete(sentinel)
+    r.delete(task_key)
+    from config.celery import app as celery_app
+    celery_app.control.revoke(task_id, terminate=False)
+    return True
 
 
 class ChessConsumer(AsyncWebsocketConsumer):
@@ -56,9 +101,15 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 {"type": "player_left_event", "player": self.role, "username": self.username},
             )
             if await self.is_game_ongoing():
-                key = (self.room_id, self.role)
-                task = asyncio.create_task(self._abandon_after_grace(key))
-                _pending_abandons[key] = task
+                loop = asyncio.get_event_loop()
+                scheduled = await loop.run_in_executor(
+                    None, _schedule_abandon_sync, str(self.room_id), self.role
+                )
+                if not scheduled:
+                    # Redis unavailable — fall back to in-process timer (single instance only)
+                    key = (self.room_id, self.role)
+                    task = asyncio.create_task(self._abandon_after_grace(key))
+                    _pending_abandons[key] = task
 
     async def receive(self, text_data):
         try:
@@ -101,10 +152,17 @@ class ChessConsumer(AsyncWebsocketConsumer):
         self.username = self.user.username
 
         # Cancel pending abandon timer if this player is reconnecting
-        key = (self.room_id, self.role)
-        task = _pending_abandons.pop(key, None)
-        if task:
-            task.cancel()
+        loop = asyncio.get_event_loop()
+        cancelled_via_celery = await loop.run_in_executor(
+            None, _cancel_abandon_sync, str(self.room_id), self.role
+        )
+        # Also check in-process fallback dict
+        in_process_key = (self.room_id, self.role)
+        in_process_task = _pending_abandons.pop(in_process_key, None)
+        if in_process_task:
+            in_process_task.cancel()
+
+        if cancelled_via_celery or in_process_task:
             await self.channel_layer.group_send(
                 self.room_group,
                 {"type": "player_reconnected_event", "player": self.role, "username": self.username},
@@ -420,9 +478,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 )
                 game.room.status = Room.STATUS_FINISHED
                 game.room.save(update_fields=["status"])
-                from .utils import update_ratings
-
-                update_ratings(game)
+                from .tasks import update_ratings_task
+                update_ratings_task.delay(str(game.id))
                 return {
                     "fen": game.fen,
                     "pgn": game.pgn,
@@ -450,9 +507,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 )
                 game.room.status = Room.STATUS_FINISHED
                 game.room.save(update_fields=["status"])
-                from .utils import update_ratings
-
-                update_ratings(game)
+                from .tasks import update_ratings_task
+                update_ratings_task.delay(str(game.id))
                 return {
                     "fen": game.fen,
                     "pgn": game.pgn,
@@ -524,9 +580,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if game.result != Game.RESULT_ONGOING:
             game.room.status = Room.STATUS_FINISHED
             game.room.save(update_fields=["status"])
-            from .utils import update_ratings
-
-            update_ratings(game)
+            from .tasks import update_ratings_task
+            update_ratings_task.delay(str(game.id))
 
         return {
             "fen": game.fen,
@@ -541,7 +596,6 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def end_game(self, result):
-        from .utils import update_ratings
         try:
             game = Game.objects.select_related("white_player", "black_player").get(
                 room_id=self.room_id
@@ -555,7 +609,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
             game.room.status = Room.STATUS_FINISHED
             game.room.save(update_fields=["status"])
 
-            update_ratings(game)
+            from .tasks import update_ratings_task
+            update_ratings_task.delay(str(game.id))
         except Game.DoesNotExist:
             pass
 
@@ -605,9 +660,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
         game.room.status = Room.STATUS_FINISHED
         game.room.save(update_fields=["status"])
 
-        from .utils import update_ratings
-
-        update_ratings(game)
+        from .tasks import update_ratings_task
+        update_ratings_task.delay(str(game.id))
         return {"ok": True}
 
     @database_sync_to_async

@@ -1,3 +1,4 @@
+import json
 import stripe
 from datetime import timedelta
 
@@ -13,11 +14,24 @@ from rest_framework.serializers import Serializer, IntegerField
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.response import Response
 from .models import Room, Game, Move, Donation
-from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, DonationSerializer
+from .serializers import RoomSerializer, RoomCreateSerializer, GameSerializer, GameHistorySummarySerializer, DonationSerializer
 from .throttles import DonateRateThrottle
 from . import matchmaking
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+
+STATS_CACHE_KEY = "platform_stats"
+STATS_CACHE_TTL = 10  # seconds
+
+
+def _redis():
+    try:
+        import redis as redis_lib
+        r = redis_lib.from_url(settings.REDIS_URL or "", decode_responses=True)
+        r.ping()
+        return r
+    except Exception:
+        return None
 
 
 class RoomListCreateView(generics.ListCreateAPIView):
@@ -59,7 +73,7 @@ class RoomDetailView(generics.RetrieveAPIView):
 
 
 class GameHistoryView(generics.ListAPIView):
-    serializer_class = GameSerializer
+    serializer_class = GameHistorySummarySerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
@@ -68,21 +82,19 @@ class GameHistoryView(generics.ListAPIView):
             Game.objects.filter(result__in=["white", "black", "draw"])
             .filter(Q(white_player__username=username) | Q(black_player__username=username))
             .select_related("white_player", "black_player", "room")
-            .prefetch_related("moves")
             .distinct()
             .order_by("-created_at")[:50]
         )
 
 
 class GameRecentListView(generics.ListAPIView):
-    serializer_class = GameSerializer
+    serializer_class = GameHistorySummarySerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
         return (
             Game.objects.filter(result__in=["white", "black", "draw"])
             .select_related("white_player", "black_player", "room")
-            .prefetch_related("moves")
             .order_by("-ended_at", "-created_at")[:100]
         )
 
@@ -97,6 +109,11 @@ class GameDetailView(generics.RetrieveAPIView):
 @api_view(["GET"])
 @permission_classes([permissions.AllowAny])
 def platform_stats(request):
+    r = _redis()
+    if r:
+        cached = r.get(STATS_CACHE_KEY)
+        if cached:
+            return Response(json.loads(cached))
     User = get_user_model()
     now = timezone.now()
     recent_cutoff = now - timedelta(minutes=15)
@@ -139,18 +156,19 @@ def platform_stats(request):
 
     mm_queue = matchmaking.count_matchmaking_queue_entries()
 
-    return Response(
-        {
-            "live_games": live_games_count,
-            "players_in_live_games": players_in_live_games,
-            "users_active_last_15m": users_active_last_15m,
-            "rooms_waiting": rooms_waiting,
-            "games_finished_today": games_finished_today,
-            "matchmaking_queue": mm_queue,
-            "registered_users": User.objects.count(),
-            "active_users_window_minutes": 15,
-        }
-    )
+    payload = {
+        "live_games": live_games_count,
+        "players_in_live_games": players_in_live_games,
+        "users_active_last_15m": users_active_last_15m,
+        "rooms_waiting": rooms_waiting,
+        "games_finished_today": games_finished_today,
+        "matchmaking_queue": mm_queue,
+        "registered_users": User.objects.count(),
+        "active_users_window_minutes": 15,
+    }
+    if r:
+        r.setex(STATS_CACHE_KEY, STATS_CACHE_TTL, json.dumps(payload))
+    return Response(payload)
 
 
 class _MatchmakingSerializer(Serializer):
@@ -253,6 +271,19 @@ def create_donation(request, room_id):
         )
     except stripe.error.StripeError as e:
         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def ws_ticket(request):
+    """Issue a short-lived one-time ticket for WebSocket auth (avoids JWT in URL logs)."""
+    import secrets
+    r = _redis()
+    if not r:
+        return Response({"error": "Ticket service unavailable."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    ticket = secrets.token_urlsafe(32)
+    r.setex(f"ws_ticket:{ticket}", 30, str(request.user.id))
+    return Response({"ticket": ticket})
 
 
 @api_view(["POST"])

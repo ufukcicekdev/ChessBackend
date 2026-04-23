@@ -36,6 +36,9 @@ class Room(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status"], name="room_status_idx"),
+        ]
 
     def __str__(self):
         return f"Room {self.id} [{self.status}]"
@@ -80,6 +83,11 @@ class Game(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["result"], name="game_result_idx"),
+            models.Index(fields=["ended_at"], name="game_ended_at_idx"),
+            models.Index(fields=["result", "ended_at"], name="game_result_ended_idx"),
+        ]
 
     def __str__(self):
         white = self.white_player.username if self.white_player else "?"
@@ -98,6 +106,9 @@ class Move(models.Model):
     class Meta:
         ordering = ["move_number"]
         unique_together = [("game", "move_number")]
+        indexes = [
+            models.Index(fields=["timestamp"], name="move_timestamp_idx"),
+        ]
 
     def __str__(self):
         return f"Game {self.game_id} Move {self.move_number}: {self.san}"

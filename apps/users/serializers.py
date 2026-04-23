@@ -54,14 +54,21 @@ class WithdrawalRequestSerializer(serializers.Serializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     games_lost = serializers.IntegerField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    next_title = serializers.CharField(read_only=True, allow_null=True)
+    rating_to_next_title = serializers.IntegerField(read_only=True, allow_null=True)
+    masked_iban = serializers.SerializerMethodField(read_only=True)
+
+    def get_masked_iban(self, obj):
+        iban = obj.iban
+        if not iban or len(iban) < 6:
+            return iban
+        return iban[:2] + "** **** **** " + iban[-4:]
 
     def validate_iban(self, value):
         if value and not IBAN_RE.match(value.upper()):
             raise serializers.ValidationError("Invalid IBAN format.")
         return value.upper() if value else value
-    title = serializers.CharField(read_only=True)
-    next_title = serializers.CharField(read_only=True, allow_null=True)
-    rating_to_next_title = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = User
@@ -72,9 +79,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "rating_to_next_title",
             "games_played", "games_won", "games_drawn", "games_lost",
             "avatar", "created_at",
-            "wallet_balance", "iban",
+            "wallet_balance", "iban", "masked_iban",
         ]
         read_only_fields = ["id", "rating", "games_played", "games_won", "games_drawn", "created_at", "wallet_balance"]
+        extra_kwargs = {"iban": {"write_only": True}}
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
