@@ -72,6 +72,15 @@ DATABASES = {
     }
 }
 
+if config("REDIS_URL", default=None):
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": config("REDIS_URL"),
+            "TIMEOUT": 300,
+        }
+    }
+
 USE_REDIS_CHANNEL_LAYER = config("USE_REDIS_CHANNEL_LAYER", default=False, cast=bool)
 REDIS_URL = config("REDIS_URL", default=None)
 
@@ -125,7 +134,9 @@ X_FRAME_OPTIONS = "DENY"
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+    # Railway terminates SSL at the load balancer — app receives plain HTTP internally.
+    # Setting SECURE_SSL_REDIRECT=True here would break health checks and cause redirect loops.
+    SECURE_SSL_REDIRECT = False
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 

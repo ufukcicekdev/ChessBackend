@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils import timezone
-from .models import Room, Game, Move, Donation, PlatformSettings, WithdrawalRequest
+from .models import Room, Game, Move, Donation, PlatformSettings, WithdrawalRequest, Challenge
 
 
 class MoveInline(admin.TabularInline):
@@ -56,3 +56,11 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
         queryset.filter(status=WithdrawalRequest.STATUS_PENDING).update(
             status=WithdrawalRequest.STATUS_REJECTED, processed_at=timezone.now()
         )
+
+
+@admin.register(Challenge)
+class ChallengeAdmin(admin.ModelAdmin):
+    list_display = ["id", "challenger", "challenged", "status", "time_control", "increment", "wager_amount", "created_at"]
+    list_filter = ["status"]
+    readonly_fields = ["id", "challenger", "challenged", "room", "created_at"]
+    search_fields = ["challenger__username", "challenged__username"]

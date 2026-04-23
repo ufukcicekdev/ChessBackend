@@ -81,8 +81,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar", "created_at",
             "wallet_balance", "iban", "masked_iban",
         ]
-        read_only_fields = ["id", "rating", "games_played", "games_won", "games_drawn", "created_at", "wallet_balance"]
+        read_only_fields = ["id", "email", "rating", "games_played", "games_won", "games_drawn", "created_at", "wallet_balance"]
         extra_kwargs = {"iban": {"write_only": True}}
+
+    def validate_username(self, value):
+        user = self.instance
+        if User.objects.filter(username=value).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError("This username is already taken.")
+        if len(value) < 3:
+            raise serializers.ValidationError("Username must be at least 3 characters.")
+        return value
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

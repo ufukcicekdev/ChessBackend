@@ -52,9 +52,25 @@ class MyRankView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        try:
+            from django.core.cache import cache
+            cache_key = f"user_rank_{request.user.id}"
+            cached = cache.get(cache_key)
+            if cached:
+                return Response(cached)
+        except Exception:
+            cached = None
+
         rank = User.objects.filter(rating__gt=request.user.rating).count() + 1
         total = User.objects.count()
-        return Response({"rank": rank, "total": total})
+        data = {"rank": rank, "total": total}
+
+        try:
+            cache.set(cache_key, data, timeout=120)
+        except Exception:
+            pass
+
+        return Response(data)
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
