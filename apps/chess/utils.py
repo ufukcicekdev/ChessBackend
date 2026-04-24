@@ -86,8 +86,12 @@ def update_ratings(game, k=32):
         else:
             sa, sb = 0.5, 0.5
 
-        white.rating = max(100, round(white.rating + k * (sa - ea)))
-        black.rating = max(100, round(black.rating + k * (sb - eb)))
+        white_new = max(100, round(white.rating + k * (sa - ea)))
+        black_new = max(100, round(black.rating + k * (sb - eb)))
+        white_change = white_new - white.rating
+        black_change = black_new - black.rating
+        white.rating = white_new
+        black.rating = black_new
 
         white.games_played += 1
         black.games_played += 1
@@ -101,5 +105,9 @@ def update_ratings(game, k=32):
 
         white.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
         black.save(update_fields=["rating", "games_played", "games_won", "games_drawn"])
+        Game.objects.filter(pk=game.pk).update(
+            white_rating_change=white_change,
+            black_rating_change=black_change,
+        )
 
     distribute_donations(game)

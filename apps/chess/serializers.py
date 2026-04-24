@@ -26,6 +26,7 @@ class GameSerializer(serializers.ModelSerializer):
             "white_time_remaining", "black_time_remaining",
             "time_control", "increment",
             "started_at", "ended_at", "moves", "move_count",
+            "white_rating_change", "black_rating_change",
         ]
 
 

@@ -79,6 +79,8 @@ class Game(models.Model):
     # Used for server-side clock updates between moves.
     last_move_at = models.DateTimeField(null=True, blank=True)
     ratings_updated = models.BooleanField(default=False)
+    white_rating_change = models.IntegerField(null=True, blank=True)
+    black_rating_change = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
