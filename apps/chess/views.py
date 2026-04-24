@@ -93,11 +93,13 @@ class GameRecentListView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        return (
-            Game.objects.filter(result__in=["white", "black", "draw"])
-            .select_related("white_player", "black_player", "room")
-            .order_by("-ended_at", "-created_at")[:100]
-        )
+        qs = Game.objects.filter(result__in=["white", "black", "draw"]) \
+            .select_related("white_player", "black_player", "room") \
+            .order_by("-ended_at", "-created_at")
+        username = self.request.query_params.get("username", "").strip()
+        if username:
+            qs = qs.filter(Q(white_player__username=username) | Q(black_player__username=username))
+        return qs
 
 
 class GameDetailView(generics.RetrieveAPIView):
