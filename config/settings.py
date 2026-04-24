@@ -134,11 +134,11 @@ X_FRAME_OPTIONS = "DENY"
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    # Railway terminates SSL at the load balancer — app receives plain HTTP internally.
-    # Setting SECURE_SSL_REDIRECT=True here would break health checks and cause redirect loops.
-    SECURE_SSL_REDIRECT = False
+    SECURE_SSL_REDIRECT = False          # Railway terminates SSL at LB
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # Tell Django the real protocol comes from Railway's proxy header
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=False, cast=bool)
 CORS_ALLOWED_ORIGINS = [

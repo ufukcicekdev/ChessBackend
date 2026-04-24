@@ -18,5 +18,13 @@ done
 echo "Collecting static files..."
 python manage.py collectstatic --noinput || true
 
-echo "Starting Daphne on port ${PORT_TO_BIND}..."
-exec daphne -b 0.0.0.0 -p "${PORT_TO_BIND}" --proxy-headers -t 60 config.asgi:application
+# Number of gunicorn workers. Rule of thumb: 2 * CPU cores + 1
+WORKERS="${WEB_WORKERS:-4}"
+echo "Starting Gunicorn+Uvicorn on port ${PORT_TO_BIND} with ${WORKERS} workers..."
+exec gunicorn config.asgi:application \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --workers "${WORKERS}" \
+  --bind "0.0.0.0:${PORT_TO_BIND}" \
+  --timeout 120 \
+  --keep-alive 5 \
+  --forwarded-allow-ips="*"
