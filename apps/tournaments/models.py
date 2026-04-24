@@ -8,11 +8,13 @@ class Tournament(models.Model):
     STATUS_REGISTRATION = "registration"
     STATUS_ACTIVE = "active"
     STATUS_FINISHED = "finished"
+    STATUS_CANCELLED = "cancelled"
 
     STATUS_CHOICES = [
         (STATUS_REGISTRATION, "Registration"),
         (STATUS_ACTIVE, "Active"),
         (STATUS_FINISHED, "Finished"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

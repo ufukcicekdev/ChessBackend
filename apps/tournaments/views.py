@@ -8,7 +8,7 @@ from .serializers import TournamentSerializer, TournamentCreateSerializer
 
 
 class TournamentListCreateView(generics.ListCreateAPIView):
-    queryset = Tournament.objects.prefetch_related("participants", "rounds__matches")
+    queryset = Tournament.objects.exclude(status=Tournament.STATUS_CANCELLED).prefetch_related("participants", "rounds__matches")
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_serializer_class(self):
@@ -69,7 +69,7 @@ def cancel_tournament(request, tournament_id):
     tournament = get_object_or_404(Tournament, id=tournament_id, created_by=request.user)
     if tournament.status != Tournament.STATUS_REGISTRATION:
         return Response({"error": "Can only cancel during registration."}, status=status.HTTP_400_BAD_REQUEST)
-    tournament.status = Tournament.STATUS_FINISHED
+    tournament.status = Tournament.STATUS_CANCELLED
     tournament.save(update_fields=["status"])
     return Response({"status": "cancelled"})
 
