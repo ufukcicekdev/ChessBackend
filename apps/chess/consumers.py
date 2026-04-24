@@ -607,7 +607,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def end_game(self, result):
         try:
-            game = Game.objects.select_related("white_player", "black_player").get(
+            game = Game.objects.select_related("white_player", "black_player", "room").get(
                 room_id=self.room_id
             )
             if game.result != Game.RESULT_ONGOING:
@@ -621,6 +621,13 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
             from .tasks import update_ratings_task
             update_ratings_task.delay(str(game.id))
+
+            # Advance tournament bracket if this was a tournament match
+            try:
+                from apps.tournaments.views import advance_tournament_bracket
+                advance_tournament_bracket(game)
+            except Exception:
+                pass
         except Game.DoesNotExist:
             pass
 
@@ -672,6 +679,13 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
         from .tasks import update_ratings_task
         update_ratings_task.delay(str(game.id))
+
+        try:
+            from apps.tournaments.views import advance_tournament_bracket
+            advance_tournament_bracket(game)
+        except Exception:
+            pass
+
         return {"ok": True}
 
     @database_sync_to_async

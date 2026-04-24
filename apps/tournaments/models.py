@@ -107,6 +107,10 @@ class TournamentMatch(models.Model):
         null=True, blank=True, related_name="won_matches"
     )
     is_bye = models.BooleanField(default=False)
+    room = models.OneToOneField(
+        "chess.Room", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="tournament_match"
+    )
 
     class Meta:
         unique_together = [("round", "match_number")]

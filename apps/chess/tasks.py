@@ -52,6 +52,12 @@ def abandon_game_task(self, room_id: str, color: str):
     update_ratings(game)
 
     # Broadcast game_over to the room group via the channel layer
+    try:
+        from apps.tournaments.views import advance_tournament_bracket
+        advance_tournament_bracket(game)
+    except Exception:
+        pass
+
     from channels.layers import get_channel_layer
     from asgiref.sync import async_to_sync
     channel_layer = get_channel_layer()

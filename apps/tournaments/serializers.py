@@ -7,10 +7,11 @@ class TournamentMatchSerializer(serializers.ModelSerializer):
     player1_username = serializers.CharField(source="player1.user.username", default=None)
     player2_username = serializers.CharField(source="player2.user.username", default=None)
     winner_username = serializers.CharField(source="winner.user.username", default=None)
+    room_id = serializers.UUIDField(source="room.id", default=None, read_only=True)
 
     class Meta:
         model = TournamentMatch
-        fields = ["match_number", "player1_username", "player2_username", "winner_username", "is_bye"]
+        fields = ["match_number", "player1_username", "player2_username", "winner_username", "is_bye", "room_id"]
 
 
 class TournamentRoundSerializer(serializers.ModelSerializer):
