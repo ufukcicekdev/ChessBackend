@@ -92,6 +92,49 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     throttle_classes = [LoginRateThrottle]
 
 
+class AvatarUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [__import__("rest_framework.parsers", fromlist=["MultiPartParser"]).MultiPartParser]
+
+    def post(self, request):
+        file = request.FILES.get("avatar")
+        if not file:
+            return Response({"error": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > 5 * 1024 * 1024:
+            return Response({"error": "File too large. Max 5 MB."}, status=status.HTTP_400_BAD_REQUEST)
+        if not file.content_type.startswith("image/"):
+            return Response({"error": "Only image files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        import os, uuid
+        ext = os.path.splitext(file.name)[1].lower() or ".jpg"
+        filename = f"avatars/{uuid.uuid4().hex}{ext}"
+
+        from django.core.files.storage import default_storage
+        saved_path = default_storage.save(filename, file)
+        url = default_storage.url(saved_path)
+
+        request.user.avatar = url
+        request.user.save(update_fields=["avatar"])
+        return Response({"avatar": url})
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        current = request.data.get("current_password", "")
+        new_pw = request.data.get("new_password", "")
+        if not current or not new_pw:
+            return Response({"error": "Both fields required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not request.user.check_password(current):
+            return Response({"error": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(new_pw) < 6:
+            return Response({"error": "Password must be at least 6 characters."}, status=status.HTTP_400_BAD_REQUEST)
+        request.user.set_password(new_pw)
+        request.user.save(update_fields=["password"])
+        return Response({"detail": "Password changed successfully."})
+
+
 class WithdrawalRequestView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 

@@ -162,6 +162,21 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# ── DigitalOcean Spaces / S3 storage ─────────────────────────────────────────
+_AWS_KEY = config("AWS_ACCESS_KEY_ID", default="")
+if _AWS_KEY:
+    INSTALLED_APPS += ["storages"]
+    AWS_ACCESS_KEY_ID = _AWS_KEY
+    AWS_SECRET_ACCESS_KEY = config("AWS_SECRET_ACCESS_KEY")
+    AWS_STORAGE_BUCKET_NAME = config("AWS_STORAGE_BUCKET_NAME")
+    AWS_S3_REGION_NAME = config("AWS_S3_REGION_NAME", default="fra1")
+    AWS_S3_ENDPOINT_URL = config("AWS_S3_ENDPOINT_URL", default="https://fra1.digitaloceanspaces.com")
+    AWS_S3_OBJECT_PARAMETERS = {"CacheControl": "max-age=86400"}
+    AWS_DEFAULT_ACL = "public-read"
+    AWS_QUERYSTRING_AUTH = False
+    MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ── Celery ────────────────────────────────────────────────────────────────────

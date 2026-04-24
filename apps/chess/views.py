@@ -367,12 +367,18 @@ def send_challenge(request):
         challenger=request.user, challenged=challenged, status=Challenge.STATUS_PENDING
     ).update(status=Challenge.STATUS_EXPIRED)
 
+    room_id = request.data.get("room_id")
+    room = None
+    if room_id:
+        room = Room.objects.filter(id=room_id, created_by=request.user).first()
+
     challenge = Challenge.objects.create(
         challenger=request.user,
         challenged=challenged,
         time_control=time_control,
         increment=increment,
         wager_amount=wager_amount,
+        room=room,
     )
     return Response({"id": str(challenge.id)}, status=201)
 
@@ -390,15 +396,18 @@ def accept_challenge(request, challenge_id):
         challenge.save(update_fields=["status"])
         return Response({"error": "Challenge expired"}, status=400)
 
-    # Create room and assign players
-    room = Room.objects.create(
-        time_control=challenge.time_control,
-        increment=challenge.increment,
-        created_by=challenge.challenger,
-        is_public=True,
-    )
+    # Use pre-created room (e.g. rematch) or create a new one
+    if challenge.room_id:
+        room = challenge.room
+    else:
+        room = Room.objects.create(
+            time_control=challenge.time_control,
+            increment=challenge.increment,
+            created_by=challenge.challenger,
+            is_public=True,
+        )
+        challenge.room = room
     challenge.status = Challenge.STATUS_ACCEPTED
-    challenge.room = room
     challenge.save(update_fields=["status", "room"])
 
     return Response({"room_id": str(room.id)})
