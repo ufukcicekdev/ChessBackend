@@ -300,6 +300,29 @@ class ChessConsumer(AsyncWebsocketConsumer):
             self.room_group,
             {"type": "draw_result_event", "result": "draw", "accepted_by": self.role},
         )
+        # Broadcast updated game state so both clients see the game-over screen
+        state = await self.get_game_state()
+        await self.channel_layer.group_send(
+            self.room_group,
+            {
+                "type": "game_state_event",
+                "fen": state["fen"],
+                "pgn": state["pgn"],
+                "last_move": state.get("last_move"),
+                "move_number": state["move_number"],
+                "white_time": state["white_time"],
+                "black_time": state["black_time"],
+                "last_move_at": state.get("last_move_at"),
+                "server_time": timezone.now().isoformat(),
+                "is_check": state.get("is_check"),
+                "is_game_over": True,
+                "game_result": "draw",
+            },
+        )
+        await self.channel_layer.group_send(
+            self.room_group,
+            {"type": "game_over_event", "result": "draw", "reason": "draw"},
+        )
 
     async def handle_draw_decline(self, data):
         if self.role == "spectator":
