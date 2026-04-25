@@ -216,8 +216,13 @@ class Challenge(models.Model):
     challenged = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="received_challenges"
     )
+    COLOR_WHITE  = "white"
+    COLOR_BLACK  = "black"
+    COLOR_RANDOM = "random"
+
     time_control = models.IntegerField(default=300)
     increment = models.IntegerField(default=0)
+    challenger_color = models.CharField(max_length=10, default=COLOR_RANDOM)
     status = models.CharField(max_length=20, default=STATUS_PENDING)
     room = models.ForeignKey(Room, null=True, blank=True, on_delete=models.SET_NULL)
 

@@ -335,6 +335,9 @@ def send_challenge(request):
     username = request.data.get("username")
     time_control = int(request.data.get("time_control", 300))
     increment = int(request.data.get("increment", 0))
+    challenger_color = request.data.get("challenger_color", "random")
+    if challenger_color not in ("white", "black", "random"):
+        challenger_color = "random"
     wager_amount = request.data.get("wager_amount")  # None for free challenges
 
     if not username:
@@ -379,6 +382,7 @@ def send_challenge(request):
         challenged=challenged,
         time_control=time_control,
         increment=increment,
+        challenger_color=challenger_color,
         wager_amount=wager_amount,
         room=room,
     )
@@ -409,6 +413,29 @@ def accept_challenge(request, challenge_id):
             is_public=True,
         )
         challenge.room = room
+
+    # Pre-assign colors based on challenger_color preference
+    import random as _random
+    challenger_color = challenge.challenger_color or "random"
+    if challenger_color == "random":
+        challenger_color = _random.choice(["white", "black"])
+
+    game, _ = Game.objects.get_or_create(room=room)
+    now = timezone.now()
+    if challenger_color == "white":
+        game.white_player = challenge.challenger
+        game.black_player = challenge.challenged
+    else:
+        game.white_player = challenge.challenged
+        game.black_player = challenge.challenger
+    game.white_time_remaining = room.time_control
+    game.black_time_remaining = room.time_control
+    game.started_at = now
+    game.last_move_at = now
+    game.save(update_fields=["white_player", "black_player", "white_time_remaining", "black_time_remaining", "started_at", "last_move_at"])
+    room.status = Room.STATUS_ACTIVE
+    room.save(update_fields=["status"])
+
     challenge.status = Challenge.STATUS_ACCEPTED
     challenge.save(update_fields=["status", "room"])
 
