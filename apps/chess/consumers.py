@@ -160,21 +160,21 @@ class ChessConsumer(AsyncWebsocketConsumer):
             await self.send_error(result["error"])
             return
 
+        is_reconnect = result.get("is_reconnect", False)
         self.role = result["color"]
         self.username = self.user.username
 
-        # Cancel pending abandon timer if this player is reconnecting
+        # Always cancel any pending abandon timer when the player comes back
         loop = asyncio.get_event_loop()
-        cancelled_via_celery = await loop.run_in_executor(
+        await loop.run_in_executor(
             None, _cancel_abandon_sync, str(self.room_id), self.role
         )
-        # Also check in-process fallback dict
         in_process_key = (self.room_id, self.role)
         in_process_task = _pending_abandons.pop(in_process_key, None)
         if in_process_task:
             in_process_task.cancel()
 
-        if cancelled_via_celery or in_process_task:
+        if is_reconnect:
             await self.channel_layer.group_send(
                 self.room_group,
                 {"type": "player_reconnected_event", "player": self.role, "username": self.username},
@@ -444,9 +444,9 @@ class ChessConsumer(AsyncWebsocketConsumer):
         game, _ = Game.objects.get_or_create(room=room)
 
         if game.white_player == self.user:
-            return {"error": None, "color": "white"}
+            return {"error": None, "color": "white", "is_reconnect": True}
         if game.black_player == self.user:
-            return {"error": None, "color": "black"}
+            return {"error": None, "color": "black", "is_reconnect": True}
 
         if not game.white_player:
             game.white_player = self.user
