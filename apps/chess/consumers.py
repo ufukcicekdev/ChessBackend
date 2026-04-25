@@ -106,12 +106,14 @@ class ChessConsumer(AsyncWebsocketConsumer):
                 self.room_group,
                 {"type": "player_left_event", "player": self.role, "username": getattr(self, "username", None)},
             )
-            if await self.is_game_ongoing():
+            ongoing, time_remaining = await self.get_player_time_remaining()
+            if ongoing:
+                # Grace period = min(60s, player's remaining clock)
+                grace = min(ABANDON_GRACE_SECONDS, max(time_remaining, 5))
                 loop = asyncio.get_event_loop()
-                # Always start in-process timer (works even without Celery worker)
                 key = (self.room_id, self.role)
                 if key not in _pending_abandons:
-                    task = asyncio.create_task(self._abandon_after_grace(key))
+                    task = asyncio.create_task(self._abandon_after_grace(key, grace))
                     _pending_abandons[key] = task
                 # Also try Celery for multi-instance setups (best-effort)
                 await loop.run_in_executor(
@@ -378,8 +380,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
     #  Abandon grace-period                                               #
     # ------------------------------------------------------------------ #
 
-    async def _abandon_after_grace(self, key: tuple):
-        await asyncio.sleep(ABANDON_GRACE_SECONDS)
+    async def _abandon_after_grace(self, key: tuple, grace: int = ABANDON_GRACE_SECONDS):
+        await asyncio.sleep(grace)
         _pending_abandons.pop(key, None)
         _, color = key
         winner = "black" if color == "white" else "white"
@@ -734,6 +736,20 @@ class ChessConsumer(AsyncWebsocketConsumer):
             )
         except Game.DoesNotExist:
             return False
+
+    @database_sync_to_async
+    def get_player_time_remaining(self):
+        """Returns (ongoing: bool, seconds_remaining: int) for the disconnecting player."""
+        try:
+            game = Game.objects.get(room_id=self.room_id)
+            if game.result != Game.RESULT_ONGOING or not game.white_player_id or not game.black_player_id:
+                return False, 0
+            if self.role == "white":
+                return True, int(game.white_time_remaining)
+            else:
+                return True, int(game.black_time_remaining)
+        except Game.DoesNotExist:
+            return False, 0
 
     async def send_error(self, message):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))
