@@ -549,7 +549,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if fen_server != fen_after:
             return {"error": "FEN mismatch"}
 
-        move_number = game.moves.count() + 1
+        # Derive move_number from existing PGN token count (no extra DB query)
+        existing_sans = [t for t in game.pgn.split() if not t.endswith(".")] if game.pgn else []
+        move_number = len(existing_sans) + 1
+
         Move.objects.create(
             game=game,
             move_number=move_number,
@@ -560,14 +563,12 @@ class ChessConsumer(AsyncWebsocketConsumer):
         game.fen = fen_server
         game.last_move_at = now
 
-        # Rebuild PGN from moves
-        moves = list(game.moves.order_by("move_number").values_list("san", flat=True))
-        pgn_parts = []
-        for i, m in enumerate(moves):
-            if i % 2 == 0:
-                pgn_parts.append(f"{i // 2 + 1}.")
-            pgn_parts.append(m)
-        game.pgn = " ".join(pgn_parts)
+        # Append to existing PGN instead of refetching all moves
+        if move_number % 2 == 1:
+            new_token = f"{(move_number + 1) // 2}. {san_server}"
+        else:
+            new_token = san_server
+        game.pgn = (game.pgn + " " + new_token).strip()
 
         outcome = board.outcome(claim_draw=True)
         if outcome and outcome.winner is not None:
