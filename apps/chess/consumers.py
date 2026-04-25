@@ -619,8 +619,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
             game.room.status = Room.STATUS_FINISHED
             game.room.save(update_fields=["status"])
 
-            from .tasks import update_ratings_task
-            update_ratings_task.delay(str(game.id))
+            from .utils import update_ratings
+            update_ratings(game)
 
             # Advance tournament bracket if this was a tournament match
             try:
@@ -677,8 +677,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
         game.room.status = Room.STATUS_FINISHED
         game.room.save(update_fields=["status"])
 
-        from .tasks import update_ratings_task
-        update_ratings_task.delay(str(game.id))
+        from .utils import update_ratings
+        update_ratings(game)
 
         try:
             from apps.tournaments.views import advance_tournament_bracket
