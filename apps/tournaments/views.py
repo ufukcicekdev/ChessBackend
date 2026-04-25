@@ -102,8 +102,13 @@ def create_match_room(request, tournament_id, match_number):
 
     # Only the two players can create the room
     my_username = request.user.username
-    if match.player1.user.username != my_username and match.player2.user.username != my_username:
+    p1_name = match.player1.user.username if match.player1 else None
+    p2_name = match.player2.user.username if match.player2 else None
+    if my_username not in (p1_name, p2_name):
         return Response({"error": "You are not a player in this match."}, status=status.HTTP_403_FORBIDDEN)
+
+    if match.is_bye:
+        return Response({"error": "Bye match — no room needed."}, status=status.HTTP_400_BAD_REQUEST)
 
     if match.winner:
         return Response({"error": "Match already finished."}, status=status.HTTP_400_BAD_REQUEST)

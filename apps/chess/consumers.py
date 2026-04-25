@@ -31,16 +31,19 @@ def _schedule_abandon_sync(room_id: str, color: str):
     r = _get_redis()
     if not r:
         return False
-    from .tasks import abandon_game_task
-    sentinel = f"abandon:{room_id}:{color}"
-    task_key = f"abandon_task:{room_id}:{color}"
-    r.setex(sentinel, ABANDON_GRACE_SECONDS + 30, "1")
-    result = abandon_game_task.apply_async(
-        args=[room_id, color],
-        countdown=ABANDON_GRACE_SECONDS,
-    )
-    r.setex(task_key, ABANDON_GRACE_SECONDS + 30, result.id)
-    return True
+    try:
+        from .tasks import abandon_game_task
+        sentinel = f"abandon:{room_id}:{color}"
+        task_key = f"abandon_task:{room_id}:{color}"
+        r.setex(sentinel, ABANDON_GRACE_SECONDS + 30, "1")
+        result = abandon_game_task.apply_async(
+            args=[room_id, color],
+            countdown=ABANDON_GRACE_SECONDS,
+        )
+        r.setex(task_key, ABANDON_GRACE_SECONDS + 30, result.id)
+        return True
+    except Exception:
+        return False
 
 
 def _cancel_abandon_sync(room_id: str, color: str):
@@ -101,7 +104,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if self.role in ("white", "black"):
             await self.channel_layer.group_send(
                 self.room_group,
-                {"type": "player_left_event", "player": self.role, "username": self.username},
+                {"type": "player_left_event", "player": self.role, "username": getattr(self, "username", None)},
             )
             if await self.is_game_ongoing():
                 loop = asyncio.get_event_loop()
@@ -233,7 +236,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if result["is_game_over"]:
             await self.channel_layer.group_send(
                 self.room_group,
-                {"type": "game_over_event", "result": result["game_result"]},
+                {"type": "game_over_event", "result": result["game_result"], "reason": result.get("game_over_reason")},
             )
 
     async def handle_time_loss(self, data):
@@ -299,6 +302,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
         )
 
     async def handle_draw_decline(self, data):
+        if self.role == "spectator":
+            return
         await self.channel_layer.group_send(
             self.room_group,
             {"type": "draw_result_event", "result": "declined", "declined_by": self.role},
@@ -607,6 +612,7 @@ class ChessConsumer(AsyncWebsocketConsumer):
             "is_check": bool(board.is_check()) if game.result == Game.RESULT_ONGOING else False,
             "is_game_over": game.result != Game.RESULT_ONGOING,
             "game_result": game.result if game.result != Game.RESULT_ONGOING else None,
+            "game_over_reason": "checkmate" if game.result != Game.RESULT_ONGOING and game.result != Game.RESULT_DRAW else ("draw" if game.result == Game.RESULT_DRAW else None),
         }
 
     @database_sync_to_async

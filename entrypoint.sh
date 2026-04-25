@@ -18,6 +18,13 @@ done
 echo "Collecting static files..."
 python manage.py collectstatic --noinput || true
 
+echo "Starting Celery worker..."
+celery -A config worker \
+  --loglevel=info \
+  --concurrency=2 \
+  --queues=celery \
+  --max-tasks-per-child=200 &
+
 # Number of gunicorn workers. Rule of thumb: 2 * CPU cores + 1
 WORKERS="${WEB_WORKERS:-4}"
 echo "Starting Gunicorn+Uvicorn on port ${PORT_TO_BIND} with ${WORKERS} workers..."
