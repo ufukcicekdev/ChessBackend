@@ -45,3 +45,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Firebase service account (secret)
+*firebase-adminsdk*.json
