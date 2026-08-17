@@ -164,3 +164,26 @@ class WithdrawalRequestView(APIView):
             )
 
         return Response({"id": str(wr.id), "status": wr.status}, status=status.HTTP_201_CREATED)
+
+
+class FCMTokenView(APIView):
+    """Register or remove the caller's Firebase Cloud Messaging device token."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from .models import FCMDevice
+        token = (request.data.get("token") or "").strip()
+        if not token:
+            return Response({"error": "token required"}, status=status.HTTP_400_BAD_REQUEST)
+        # Upsert: a token is globally unique; (re)assign it to the current user.
+        FCMDevice.objects.update_or_create(
+            token=token, defaults={"user": request.user}
+        )
+        return Response({"status": "registered"})
+
+    def delete(self, request):
+        from .models import FCMDevice
+        token = (request.data.get("token") or "").strip()
+        if token:
+            FCMDevice.objects.filter(token=token, user=request.user).delete()
+        return Response({"status": "removed"})

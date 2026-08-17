@@ -84,6 +84,11 @@ if config("REDIS_URL", default=None):
 USE_REDIS_CHANNEL_LAYER = config("USE_REDIS_CHANNEL_LAYER", default=False, cast=bool)
 REDIS_URL = config("REDIS_URL", default=None)
 
+# Firebase Cloud Messaging (push notifications).
+# Path to a service-account JSON file, or the raw JSON string. If unset, all
+# push sends become no-ops (safe for local dev without Firebase).
+FIREBASE_CREDENTIALS = config("FIREBASE_CREDENTIALS", default=None)
+
 if USE_REDIS_CHANNEL_LAYER and REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
@@ -193,6 +198,10 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     "expire-old-challenges": {
         "task": "apps.chess.tasks.expire_old_challenges",
+        "schedule": 60.0,  # every minute
+    },
+    "tournament-lifecycle": {
+        "task": "apps.tournaments.tasks.tournament_lifecycle_task",
         "schedule": 60.0,  # every minute
     },
 }

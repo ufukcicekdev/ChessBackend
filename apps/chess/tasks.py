@@ -41,23 +41,12 @@ def abandon_game_task(self, room_id: str, color: str):
         return
 
     winner = "black" if color == "white" else "white"
-    now = timezone.now()
-    game.result = winner
-    game.ended_at = now
-    game.save(update_fields=["result", "ended_at"])
-    game.room.status = Room.STATUS_FINISHED
-    game.room.save(update_fields=["status"])
 
-    from .utils import update_ratings
-    update_ratings(game)
+    # Close room, update ratings and advance any tournament bracket in one place.
+    from .utils import finalize_game
+    finalize_game(game, winner)
 
     # Broadcast game_over to the room group via the channel layer
-    try:
-        from apps.tournaments.views import advance_tournament_bracket
-        advance_tournament_bracket(game)
-    except Exception:
-        pass
-
     from channels.layers import get_channel_layer
     from asgiref.sync import async_to_sync
     channel_layer = get_channel_layer()

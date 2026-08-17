@@ -17,3 +17,4 @@ chess==1.11.2
 django-storages==1.14.4
 boto3==1.35.99
 Pillow==11.1.0
+firebase-admin==7.5.0

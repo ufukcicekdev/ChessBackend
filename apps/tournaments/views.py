@@ -1,3 +1,4 @@
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.decorators import api_view, permission_classes
@@ -5,20 +6,49 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from .models import Tournament, TournamentParticipant, TournamentMatch, TournamentRound
 from .serializers import TournamentSerializer, TournamentCreateSerializer
+from .services import (
+    transition_tournament,
+    run_tournament_lifecycle,
+    start_tournament_now,
+    create_rooms_for_current_round,
+)
 
 
 class TournamentListCreateView(generics.ListCreateAPIView):
-    queryset = Tournament.objects.exclude(status=Tournament.STATUS_CANCELLED).prefetch_related("participants", "rounds__matches")
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_serializer_class(self):
         return TournamentCreateSerializer if self.request.method == "POST" else TournamentSerializer
 
+    def get_queryset(self):
+        # Lazy fallback so time-based transitions still happen without a beat worker.
+        run_tournament_lifecycle()
+        qs = (
+            Tournament.objects
+            .exclude(status=Tournament.STATUS_CANCELLED)
+            .prefetch_related("participants", "rounds__matches")
+        )
+        # Hide private tournaments from the public list, except the user's own
+        # (created or joined).
+        user = self.request.user
+        if user.is_authenticated:
+            qs = qs.filter(
+                Q(is_private=False)
+                | Q(created_by=user)
+                | Q(participants__user=user)
+            ).distinct()
+        else:
+            qs = qs.filter(is_private=False)
+        return qs
+
     def create(self, request, *args, **kwargs):
         serializer = TournamentCreateSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         tournament = serializer.save()
-        return Response(TournamentSerializer(tournament).data, status=status.HTTP_201_CREATED)
+        return Response(
+            TournamentSerializer(tournament, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class TournamentDetailView(generics.RetrieveAPIView):
@@ -27,22 +57,63 @@ class TournamentDetailView(generics.RetrieveAPIView):
     lookup_field = "id"
     permission_classes = [permissions.AllowAny]
 
+    def get_object(self):
+        obj = super().get_object()
+        # Lazy transition for this tournament (open registration / auto-start).
+        try:
+            transition_tournament(obj)
+        except Exception:
+            pass
+        return obj
+
+
+def _try_join(tournament, user):
+    """Shared join logic. Returns (payload_dict, http_status)."""
+    # Apply any due transition first (e.g. registration just opened/closed).
+    try:
+        transition_tournament(tournament)
+    except Exception:
+        pass
+
+    if tournament.status != Tournament.STATUS_REGISTRATION:
+        if tournament.status == Tournament.STATUS_SCHEDULED:
+            return {"error": "Registration has not opened yet."}, status.HTTP_400_BAD_REQUEST
+        return {"error": "Registration is closed."}, status.HTTP_400_BAD_REQUEST
+
+    now = timezone.now()
+    if tournament.registration_start and now < tournament.registration_start:
+        return {"error": "Registration has not opened yet."}, status.HTTP_400_BAD_REQUEST
+    if tournament.registration_end and now >= tournament.registration_end:
+        return {"error": "Registration has closed."}, status.HTTP_400_BAD_REQUEST
+
+    _, created = TournamentParticipant.objects.get_or_create(
+        tournament=tournament, user=user
+    )
+    if not created:
+        return {"error": "Already registered."}, status.HTTP_400_BAD_REQUEST
+    return {"status": "joined", "tournament_id": str(tournament.id)}, status.HTTP_200_OK
+
 
 @api_view(["POST"])
 @permission_classes([permissions.IsAuthenticated])
 def join_tournament(request, tournament_id):
     tournament = get_object_or_404(Tournament, id=tournament_id)
-    if tournament.status != Tournament.STATUS_REGISTRATION:
-        return Response({"error": "Registration is closed"}, status=status.HTTP_400_BAD_REQUEST)
-    if tournament.participants.filter(is_active=True).count() >= tournament.max_players:
-        return Response({"error": "Tournament is full"}, status=status.HTTP_400_BAD_REQUEST)
+    payload, code = _try_join(tournament, request.user)
+    return Response(payload, status=code)
 
-    _, created = TournamentParticipant.objects.get_or_create(
-        tournament=tournament, user=request.user
-    )
-    if not created:
-        return Response({"error": "Already registered"}, status=status.HTTP_400_BAD_REQUEST)
-    return Response({"status": "joined"})
+
+@api_view(["POST"])
+@permission_classes([permissions.IsAuthenticated])
+def join_by_code(request):
+    """Join a tournament using its invite code (works for private tournaments)."""
+    code = (request.data.get("code") or "").strip().upper()
+    if not code:
+        return Response({"error": "Invite code is required."}, status=status.HTTP_400_BAD_REQUEST)
+    tournament = Tournament.objects.filter(invite_code=code).first()
+    if not tournament:
+        return Response({"error": "Invalid invite code."}, status=status.HTTP_404_NOT_FOUND)
+    payload, http_status = _try_join(tournament, request.user)
+    return Response(payload, status=http_status)
 
 
 @api_view(["POST"])
@@ -54,12 +125,8 @@ def start_tournament(request, tournament_id):
     if tournament.participants.filter(is_active=True).count() < 2:
         return Response({"error": "Need at least 2 players"}, status=status.HTTP_400_BAD_REQUEST)
 
-    tournament.status = Tournament.STATUS_ACTIVE
-    tournament.started_at = timezone.now()
-    tournament.save(update_fields=["status", "started_at"])
-    tournament.generate_bracket()
-
-    return Response(TournamentSerializer(tournament).data)
+    start_tournament_now(tournament)
+    return Response(TournamentSerializer(tournament, context={"request": request}).data)
 
 
 @api_view(["POST"])
@@ -67,8 +134,8 @@ def start_tournament(request, tournament_id):
 def cancel_tournament(request, tournament_id):
     """Creator can cancel a tournament still in registration."""
     tournament = get_object_or_404(Tournament, id=tournament_id, created_by=request.user)
-    if tournament.status != Tournament.STATUS_REGISTRATION:
-        return Response({"error": "Can only cancel during registration."}, status=status.HTTP_400_BAD_REQUEST)
+    if tournament.status not in (Tournament.STATUS_SCHEDULED, Tournament.STATUS_REGISTRATION):
+        return Response({"error": "Can only cancel before the tournament starts."}, status=status.HTTP_400_BAD_REQUEST)
     tournament.status = Tournament.STATUS_CANCELLED
     tournament.save(update_fields=["status"])
     return Response({"status": "cancelled"})
@@ -79,7 +146,7 @@ def cancel_tournament(request, tournament_id):
 def leave_tournament(request, tournament_id):
     """Participant can leave during registration."""
     tournament = get_object_or_404(Tournament, id=tournament_id)
-    if tournament.status != Tournament.STATUS_REGISTRATION:
+    if tournament.status not in (Tournament.STATUS_SCHEDULED, Tournament.STATUS_REGISTRATION):
         return Response({"error": "Cannot leave after tournament has started."}, status=status.HTTP_400_BAD_REQUEST)
     participant = TournamentParticipant.objects.filter(tournament=tournament, user=request.user).first()
     if not participant:
@@ -192,6 +259,45 @@ def advance_tournament_bracket(game):
                 match_number=i // 2 + 1,
                 defaults={"player1": p1, "player2": p2},
             )
+        # Open rooms for the freshly-created round so players can start immediately.
+        create_rooms_for_current_round(tournament)
+        # A bye in the new round may already decide a match → cascade.
+        _advance_byes(next_round)
+
+
+def _advance_byes(round_obj):
+    """If a newly created round contains bye matches (winner auto-set), and that
+    completes the round, advance again. Prevents the bracket stalling on byes."""
+    matches = list(round_obj.matches.all())
+    if matches and all(m.winner_id is not None for m in matches):
+        # Reuse the normal advance path via a synthetic call on any bye match's
+        # round completion.
+        _complete_round_and_advance(round_obj)
+
+
+def _complete_round_and_advance(current_round):
+    tournament = current_round.tournament
+    winners = [m.winner for m in current_round.matches.all()]
+    if len(winners) == 1:
+        tournament.winner = winners[0].user
+        tournament.status = Tournament.STATUS_FINISHED
+        tournament.ended_at = timezone.now()
+        tournament.save(update_fields=["winner", "status", "ended_at"])
+        return
+    next_round, _ = TournamentRound.objects.get_or_create(
+        tournament=tournament,
+        round_number=current_round.round_number + 1,
+    )
+    for i in range(0, len(winners), 2):
+        p1 = winners[i]
+        p2 = winners[i + 1] if i + 1 < len(winners) else None
+        TournamentMatch.objects.get_or_create(
+            round=next_round,
+            match_number=i // 2 + 1,
+            defaults={"player1": p1, "player2": p2},
+        )
+    create_rooms_for_current_round(tournament)
+    _advance_byes(next_round)
 
 
 @api_view(["POST"])

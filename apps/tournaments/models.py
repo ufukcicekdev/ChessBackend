@@ -1,16 +1,43 @@
 import uuid
 import math
+import secrets
+import string
 from django.db import models
 from django.conf import settings
 
 
+def generate_invite_code(length: int = 8) -> str:
+    """Short, unambiguous, uppercase invite code (no 0/O/1/I)."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _seed_positions(size: int) -> list[int]:
+    """Standard single-elimination seed order for a power-of-two bracket.
+
+    e.g. size 4 -> [1, 4, 2, 3];  size 8 -> [1, 8, 4, 5, 2, 7, 3, 6].
+    Each adjacent pair (index 2k, 2k+1) has the lower seed first.
+    """
+    order = [1, 2]
+    while len(order) < size:
+        length = len(order) * 2
+        expanded: list[int] = []
+        for x in order:
+            expanded.append(x)
+            expanded.append(length + 1 - x)
+        order = expanded
+    return order
+
+
 class Tournament(models.Model):
+    STATUS_SCHEDULED = "scheduled"
     STATUS_REGISTRATION = "registration"
     STATUS_ACTIVE = "active"
     STATUS_FINISHED = "finished"
     STATUS_CANCELLED = "cancelled"
 
     STATUS_CHOICES = [
+        (STATUS_SCHEDULED, "Scheduled"),
         (STATUS_REGISTRATION, "Registration"),
         (STATUS_ACTIVE, "Active"),
         (STATUS_FINISHED, "Finished"),
@@ -24,6 +51,15 @@ class Tournament(models.Model):
     time_control = models.IntegerField(default=300)
     increment = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_REGISTRATION)
+
+    # Invite / visibility
+    invite_code = models.CharField(max_length=12, unique=True, blank=True)
+    is_private = models.BooleanField(default=False)
+
+    # Registration window. If null, registration is open until the creator starts it manually.
+    registration_start = models.DateTimeField(null=True, blank=True)
+    registration_end = models.DateTimeField(null=True, blank=True)
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
         null=True, related_name="created_tournaments"
@@ -42,28 +78,49 @@ class Tournament(models.Model):
     def __str__(self):
         return f"{self.name} [{self.status}]"
 
+    def save(self, *args, **kwargs):
+        if not self.invite_code:
+            code = generate_invite_code()
+            while Tournament.objects.filter(invite_code=code).exists():
+                code = generate_invite_code()
+            self.invite_code = code
+        super().save(*args, **kwargs)
+
     def generate_bracket(self):
-        """Generate single-elimination bracket rounds after registration closes."""
+        """Generate the seeded single-elimination first round after registration closes.
+
+        Players are seeded by rating (highest = seed 1). The bracket is padded to
+        the next power of two with byes, placed opposite the top seeds so the
+        strongest players get the byes and don't meet each other early.
+        """
         players = list(self.participants.filter(is_active=True).select_related("user"))
         n = len(players)
         if n < 2:
             return
 
-        # Pad to next power of 2 with byes
+        # Seed by rating (highest first) and persist the seed number.
+        players.sort(key=lambda p: (p.user.rating if p.user else 0), reverse=True)
+        for idx, p in enumerate(players, start=1):
+            if p.seed != idx:
+                p.seed = idx
+                p.save(update_fields=["seed"])
+
         next_pow2 = 2 ** math.ceil(math.log2(n))
-        total_rounds = int(math.log2(next_pow2))
+        positions = _seed_positions(next_pow2)          # seed number per bracket slot
+        seed_map = {i + 1: players[i] for i in range(n)}  # seed -> participant (missing = bye)
+        slots = [seed_map.get(s) for s in positions]
 
         round_obj, _ = TournamentRound.objects.get_or_create(
             tournament=self, round_number=1
         )
 
+        # positions guarantees the better (lower) seed is first in each pair,
+        # so any bye (None) always lands in player2 → handled by Match.save().
         for i in range(0, next_pow2, 2):
-            player1 = players[i] if i < n else None
-            player2 = players[i + 1] if (i + 1) < n else None
             TournamentMatch.objects.get_or_create(
                 round=round_obj,
                 match_number=i // 2 + 1,
-                defaults={"player1": player1, "player2": player2},
+                defaults={"player1": slots[i], "player2": slots[i + 1]},
             )
 
 

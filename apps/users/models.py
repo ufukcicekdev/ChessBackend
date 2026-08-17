@@ -78,3 +78,23 @@ class User(AbstractUser):
 
     def __str__(self):
         return f"{self.username} ({self.rating})"
+
+
+class FCMDevice(models.Model):
+    """A registered Firebase Cloud Messaging device token for a user.
+
+    A user may have several (one per browser/device). Tokens rotate, so we
+    upsert on the token and prune invalid ones after a failed send.
+    """
+    user = models.ForeignKey(
+        "users.User", on_delete=models.CASCADE, related_name="fcm_devices"
+    )
+    token = models.CharField(max_length=512, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user"])]
+
+    def __str__(self):
+        return f"FCMDevice(user={self.user_id}, …{self.token[-8:]})"

@@ -38,12 +38,15 @@ class TournamentSerializer(serializers.ModelSerializer):
     rounds = TournamentRoundSerializer(many=True, read_only=True)
     participant_count = serializers.SerializerMethodField()
     participants = serializers.SerializerMethodField()
+    invite_code = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
         fields = [
-            "id", "name", "description", "max_players", "time_control", "increment",
-            "status", "created_by", "winner", "created_at", "started_at",
+            "id", "name", "description", "time_control", "increment",
+            "status", "is_private", "invite_code",
+            "registration_start", "registration_end",
+            "created_by", "winner", "created_at", "started_at",
             "participant_count", "participants", "rounds",
         ]
 
@@ -54,12 +57,46 @@ class TournamentSerializer(serializers.ModelSerializer):
         qs = obj.participants.filter(is_active=True).select_related("user").order_by("seed", "id")
         return TournamentParticipantSerializer(qs, many=True).data
 
+    def get_invite_code(self, obj):
+        """Only the creator and registered participants can see the invite code."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return None
+        if obj.created_by_id == user.id:
+            return obj.invite_code
+        if obj.participants.filter(user=user, is_active=True).exists():
+            return obj.invite_code
+        return None
+
 
 class TournamentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tournament
-        fields = ["name", "description", "max_players", "time_control", "increment"]
+        fields = [
+            "name", "description", "time_control", "increment",
+            "is_private", "registration_start", "registration_end",
+        ]
+
+    def validate(self, attrs):
+        start = attrs.get("registration_start")
+        end = attrs.get("registration_end")
+        if end and start and end <= start:
+            raise serializers.ValidationError(
+                {"registration_end": "Registration end must be after the start."}
+            )
+        from django.utils import timezone
+        if end and end <= timezone.now():
+            raise serializers.ValidationError(
+                {"registration_end": "Registration end must be in the future."}
+            )
+        return attrs
 
     def create(self, validated_data):
         validated_data["created_by"] = self.context["request"].user
+        # If registration opens in the future, the tournament starts as "scheduled".
+        from django.utils import timezone
+        start = validated_data.get("registration_start")
+        if start and start > timezone.now():
+            validated_data["status"] = Tournament.STATUS_SCHEDULED
         return super().create(validated_data)

@@ -1,6 +1,50 @@
+import logging
 from decimal import Decimal
 
 from django.db import transaction
+
+logger = logging.getLogger(__name__)
+
+
+def finalize_game(game, result=None, *, ended_at=None):
+    """Single entry point to end a game.
+
+    Sets the result (if given and the game is still ongoing), closes the room,
+    updates Elo ratings and advances any linked tournament bracket — all in one
+    place so no code path can forget a step.
+
+    Idempotent: update_ratings() self-guards via the `ratings_updated` flag and
+    advance_tournament_bracket() skips already-decided matches, so calling this
+    more than once for the same game is safe.
+
+    Pass `result` ("white"/"black"/"draw") to decide an ongoing game, or omit it
+    when the caller already set & saved game.result (e.g. checkmate in save_move).
+    Returns True if the game ended up finished.
+    """
+    from django.utils import timezone
+    from .models import Game, Room
+
+    if result is not None and game.result == Game.RESULT_ONGOING:
+        game.result = result
+        game.ended_at = ended_at or timezone.now()
+        game.save(update_fields=["result", "ended_at"])
+
+    if game.result == Game.RESULT_ONGOING:
+        return False  # nothing decided yet
+
+    if game.room_id and game.room.status != Room.STATUS_FINISHED:
+        game.room.status = Room.STATUS_FINISHED
+        game.room.save(update_fields=["status"])
+
+    update_ratings(game)
+
+    try:
+        from apps.tournaments.views import advance_tournament_bracket
+        advance_tournament_bracket(game)
+    except Exception:
+        logger.warning("tournament bracket advance failed for game %s", game.pk, exc_info=True)
+
+    return True
 
 
 def distribute_donations(game):

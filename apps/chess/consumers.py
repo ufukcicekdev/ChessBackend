@@ -63,6 +63,44 @@ def _cancel_abandon_sync(room_id: str, color: str):
     return True
 
 
+# ── Draw-offer state ──────────────────────────────────────────────────────── #
+# A draw is only valid if the *opponent* has an outstanding offer. State is kept
+# in Redis (multi-instance safe) with an in-process fallback for single-instance.
+_DRAW_OFFER_TTL = 120
+_pending_draw_offers: dict[str, str] = {}  # room_id -> offering color
+
+
+def _set_draw_offer_sync(room_id: str, color: str):
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(f"draw_offer:{room_id}", _DRAW_OFFER_TTL, color)
+            return
+        except Exception:
+            pass
+    _pending_draw_offers[str(room_id)] = color
+
+
+def _get_draw_offer_sync(room_id: str):
+    r = _get_redis()
+    if r:
+        try:
+            return r.get(f"draw_offer:{room_id}")
+        except Exception:
+            pass
+    return _pending_draw_offers.get(str(room_id))
+
+
+def _clear_draw_offer_sync(room_id: str):
+    r = _get_redis()
+    if r:
+        try:
+            r.delete(f"draw_offer:{room_id}")
+        except Exception:
+            pass
+    _pending_draw_offers.pop(str(room_id), None)
+
+
 class ChessConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for a chess room.
@@ -249,9 +287,9 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if loser not in ("white", "black"):
             await self.send_error("time_loss requires loser: white|black")
             return
-        if loser != self.role:
-            await self.send_error("time_loss loser must match your color")
-            return
+        # Either player may claim a flag-fall; the server validates below that the
+        # claimed side's clock is genuinely exhausted (end_game_on_timeout), so the
+        # winner can also claim if the timed-out player froze without disconnecting.
 
         ended = await self.end_game_on_timeout(loser)
         if not ended.get("ok"):
@@ -288,6 +326,9 @@ class ChessConsumer(AsyncWebsocketConsumer):
     async def handle_draw_offer(self, data):
         if self.role == "spectator":
             return
+        # Record the pending offer so the opponent's accept can be validated.
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _set_draw_offer_sync, str(self.room_id), self.role)
         opponent = "black" if self.role == "white" else "white"
         await self.channel_layer.group_send(
             self.room_group,
@@ -297,6 +338,14 @@ class ChessConsumer(AsyncWebsocketConsumer):
     async def handle_draw_accept(self, data):
         if self.role == "spectator":
             return
+        # A draw is only valid if the OPPONENT has an outstanding offer.
+        loop = asyncio.get_event_loop()
+        offer = await loop.run_in_executor(None, _get_draw_offer_sync, str(self.room_id))
+        opponent = "black" if self.role == "white" else "white"
+        if offer != opponent:
+            await self.send_error("No draw offer to accept")
+            return
+        await loop.run_in_executor(None, _clear_draw_offer_sync, str(self.room_id))
         await self.end_game("draw")
         await self.channel_layer.group_send(
             self.room_group,
@@ -329,6 +378,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
     async def handle_draw_decline(self, data):
         if self.role == "spectator":
             return
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _clear_draw_offer_sync, str(self.room_id))
         await self.channel_layer.group_send(
             self.room_group,
             {"type": "draw_result_event", "result": "declined", "declined_by": self.role},
@@ -448,6 +499,20 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if game.black_player == self.user:
             return {"error": None, "color": "black", "is_reconnect": True}
 
+        # Tournament match rooms are reserved for the two matched players only.
+        try:
+            tmatch = room.tournament_match
+        except Exception:
+            tmatch = None
+        if tmatch is not None:
+            allowed = set()
+            if tmatch.player1_id and tmatch.player1.user_id:
+                allowed.add(tmatch.player1.user_id)
+            if tmatch.player2_id and tmatch.player2.user_id:
+                allowed.add(tmatch.player2.user_id)
+            if self.user.id not in allowed:
+                return {"error": "This match is reserved for its two players.", "color": None}
+
         if not game.white_player:
             game.white_player = self.user
             if not game.started_at:
@@ -500,6 +565,9 @@ class ChessConsumer(AsyncWebsocketConsumer):
         if move not in board.legal_moves:
             return {"error": "Illegal move"}
 
+        # A move supersedes any pending draw offer.
+        _clear_draw_offer_sync(str(self.room_id))
+
         # Apply elapsed time to the side that is moving *before* applying the move.
         last_ts = game.last_move_at or game.started_at or now
         elapsed = max(0, int((now - last_ts).total_seconds()))
@@ -520,10 +588,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
                         "last_move_at",
                     ]
                 )
-                game.room.status = Room.STATUS_FINISHED
-                game.room.save(update_fields=["status"])
-                from .tasks import update_ratings_task
-                update_ratings_task.delay(str(game.id))
+                from .utils import finalize_game
+                finalize_game(game)
                 return {
                     "fen": game.fen,
                     "pgn": game.pgn,
@@ -549,10 +615,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
                         "last_move_at",
                     ]
                 )
-                game.room.status = Room.STATUS_FINISHED
-                game.room.save(update_fields=["status"])
-                from .tasks import update_ratings_task
-                update_ratings_task.delay(str(game.id))
+                from .utils import finalize_game
+                finalize_game(game)
                 return {
                     "fen": game.fen,
                     "pgn": game.pgn,
@@ -623,10 +687,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
         )
 
         if game.result != Game.RESULT_ONGOING:
-            game.room.status = Room.STATUS_FINISHED
-            game.room.save(update_fields=["status"])
-            from .tasks import update_ratings_task
-            update_ratings_task.delay(str(game.id))
+            # Checkmate / stalemate / other terminal position: close room,
+            # update ratings and advance any tournament bracket in one place.
+            from .utils import finalize_game
+            finalize_game(game)
 
         return {
             "fen": game.fen,
@@ -647,26 +711,10 @@ class ChessConsumer(AsyncWebsocketConsumer):
             game = Game.objects.select_related("white_player", "black_player", "room").get(
                 room_id=self.room_id
             )
-            if game.result != Game.RESULT_ONGOING:
-                return
-            game.result = result
-            game.ended_at = timezone.now()
-            game.save(update_fields=["result", "ended_at"])
-
-            game.room.status = Room.STATUS_FINISHED
-            game.room.save(update_fields=["status"])
-
-            from .utils import update_ratings
-            update_ratings(game)
-
-            # Advance tournament bracket if this was a tournament match
-            try:
-                from apps.tournaments.views import advance_tournament_bracket
-                advance_tournament_bracket(game)
-            except Exception:
-                pass
         except Game.DoesNotExist:
-            pass
+            return
+        from .utils import finalize_game
+        finalize_game(game, result)
 
     @database_sync_to_async
     def end_game_on_timeout(self, loser_role: str):
@@ -711,17 +759,8 @@ class ChessConsumer(AsyncWebsocketConsumer):
         game.last_move_at = now
         game.save(update_fields=["white_time_remaining", "black_time_remaining", "result", "ended_at", "last_move_at"])
 
-        game.room.status = Room.STATUS_FINISHED
-        game.room.save(update_fields=["status"])
-
-        from .utils import update_ratings
-        update_ratings(game)
-
-        try:
-            from apps.tournaments.views import advance_tournament_bracket
-            advance_tournament_bracket(game)
-        except Exception:
-            pass
+        from .utils import finalize_game
+        finalize_game(game)
 
         return {"ok": True}
 
