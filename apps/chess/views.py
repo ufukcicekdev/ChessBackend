@@ -386,6 +386,8 @@ def send_challenge(request):
         wager_amount=wager_amount,
         room=room,
     )
+    from .notifications import notify_user
+    notify_user(challenged.id, {"kind": "challenge_received"})
     return Response({"id": str(challenge.id)}, status=201)
 
 
@@ -439,6 +441,9 @@ def accept_challenge(request, challenge_id):
     challenge.status = Challenge.STATUS_ACCEPTED
     challenge.save(update_fields=["status", "room"])
 
+    from .notifications import notify_user
+    notify_user(challenge.challenger_id, {"kind": "challenge_accepted", "room_id": str(room.id)})
+
     return Response({"room_id": str(room.id)})
 
 
@@ -450,6 +455,8 @@ def decline_challenge(request, challenge_id):
     )
     challenge.status = Challenge.STATUS_DECLINED
     challenge.save(update_fields=["status"])
+    from .notifications import notify_user
+    notify_user(challenge.challenger_id, {"kind": "challenge_declined"})
     return Response({"status": "declined"})
 
 
@@ -462,6 +469,8 @@ def cancel_challenge(request, challenge_id):
     )
     challenge.status = Challenge.STATUS_EXPIRED
     challenge.save(update_fields=["status"])
+    from .notifications import notify_user
+    notify_user(challenge.challenged_id, {"kind": "challenge_cancelled"})
     return Response({"status": "cancelled"})
 
 

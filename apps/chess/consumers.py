@@ -792,3 +792,33 @@ class ChessConsumer(AsyncWebsocketConsumer):
 
     async def send_error(self, message):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))
+
+
+class NotificationConsumer(AsyncWebsocketConsumer):
+    """Per-user notification channel.
+
+    URL: ws://.../ws/notifications/?token=<jwt>
+
+    On connect the user joins the group "user_<id>". Server code calls
+    notify_user(user_id, event) to push events; the client reacts by refreshing
+    its data — replacing the old constant HTTP polling.
+    """
+
+    async def connect(self):
+        self.user = self.scope["user"]
+        if self.user.is_anonymous:
+            await self.close()
+            return
+        self.group = f"user_{self.user.id}"
+        await self.channel_layer.group_add(self.group, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        if hasattr(self, "group"):
+            await self.channel_layer.group_discard(self.group, self.channel_name)
+
+    async def notify(self, event):
+        await self.send(text_data=json.dumps({
+            "type": "notification",
+            "event": event.get("event", {}),
+        }))
