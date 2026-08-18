@@ -66,15 +66,22 @@ def send_to_users(user_ids, title, body, data=None, link="/"):
         return
 
     payload = {k: str(v) for k, v in (data or {}).items()}
-    payload["link"] = link
+    payload["link"] = link  # our service worker navigates using this on click
+
+    # WebpushFCMOptions.link must be an absolute HTTPS URL; only set it then.
+    # (Our SW's notificationclick handler uses data.link regardless, so this is
+    # just for FCM's default click behaviour on https origins.)
+    webpush = None
+    if link.startswith("https://"):
+        webpush = messaging.WebpushConfig(
+            fcm_options=messaging.WebpushFCMOptions(link=link),
+        )
 
     message = messaging.MulticastMessage(
         tokens=tokens,
         notification=messaging.Notification(title=title, body=body),
         data=payload,
-        webpush=messaging.WebpushConfig(
-            fcm_options=messaging.WebpushFCMOptions(link=link),
-        ),
+        webpush=webpush,
     )
 
     try:
