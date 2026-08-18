@@ -187,3 +187,70 @@ class FCMTokenView(APIView):
         if token:
             FCMDevice.objects.filter(token=token, user=request.user).delete()
         return Response({"status": "removed"})
+
+
+class PasswordResetRequestView(APIView):
+    """Request a password reset email. Always returns 200 (no user enumeration)."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip()
+        if email:
+            user = User.objects.filter(email__iexact=email).first()
+            if user and user.email:
+                self._send_reset_email(user)
+        return Response({"status": "ok"})
+
+    def _send_reset_email(self, user):
+        from django.conf import settings
+        from django.contrib.auth.tokens import default_token_generator
+        from django.core.mail import send_mail
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        link = f"{settings.FRONTEND_URL}/auth/reset-password?uid={uid}&token={token}"
+        send_mail(
+            subject="Reset your fianchess password",
+            message=(
+                f"Hi {user.username},\n\n"
+                f"We received a request to reset your fianchess password.\n"
+                f"Reset it here:\n{link}\n\n"
+                f"This link expires soon. If you didn't request this, ignore this email."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """Confirm a password reset with uid + token and set a new password."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_str
+        from django.utils.http import urlsafe_base64_decode
+
+        uid = request.data.get("uid")
+        token = request.data.get("token")
+        new_password = request.data.get("new_password") or ""
+
+        if not (uid and token and new_password):
+            return Response({"error": "uid, token and new_password are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(new_password) < 6:
+            return Response({"error": "Password must be at least 6 characters."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(pk=force_str(urlsafe_base64_decode(uid)))
+        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
+            return Response({"error": "Invalid reset link."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not default_token_generator.check_token(user, token):
+            return Response({"error": "This reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        return Response({"status": "ok"})

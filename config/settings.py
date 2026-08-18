@@ -162,6 +162,23 @@ CORS_PREFLIGHT_MAX_AGE = 86400
 STRIPE_SECRET_KEY = config("STRIPE_SECRET_KEY", default="sk_test_mock_key")
 STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="whsec_mock")
 
+# ── Email (SMTP; e.g. SMTP2GO) ──────────────────────────────────────────────
+# Set EMAIL_HOST to enable real sending; otherwise emails print to the console.
+EMAIL_HOST = config("EMAIL_HOST", default="")
+if EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+    EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+    EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+    EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+    EMAIL_USE_SSL = config("EMAIL_USE_SSL", default=False, cast=bool)
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="fianchess <no-reply@fianchess.com>")
+
+# Public URL of the frontend (used to build links in emails, e.g. password reset).
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000").rstrip("/")
+
 AUTH_USER_MODEL = "users.User"
 
 STATIC_URL = "/static/"
