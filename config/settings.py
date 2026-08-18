@@ -155,6 +155,9 @@ CORS_ALLOWED_ORIGINS = [
     if o.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
+# Let browsers cache CORS preflight (OPTIONS) responses so polling endpoints
+# don't re-send an OPTIONS before every request.
+CORS_PREFLIGHT_MAX_AGE = 86400
 
 STRIPE_SECRET_KEY = config("STRIPE_SECRET_KEY", default="sk_test_mock_key")
 STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default="whsec_mock")
