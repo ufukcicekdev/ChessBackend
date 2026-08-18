@@ -18,13 +18,8 @@ done
 echo "Collecting static files..."
 python manage.py collectstatic --noinput || true
 
-echo "Starting Celery worker..."
-celery -A config worker \
-  --loglevel=warning \
-  --concurrency=1 \
-  --pool=solo \
-  --queues=celery \
-  --max-tasks-per-child=50 &
+# NOTE: Celery worker/beat run in a SEPARATE Railway service (worker_entrypoint.sh).
+# The web service only serves HTTP/WebSocket — no embedded worker here.
 
 # Number of gunicorn workers. Rule of thumb: 2 * CPU cores + 1
 WORKERS="${WEB_WORKERS:-2}"
